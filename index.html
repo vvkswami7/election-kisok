@@ -170,97 +170,18 @@
     
     <!-- ===== JAVASCRIPT ===== -->
     <script>
-        // Configuration
-        const BACKEND_URL = 'http://localhost:8000';
-        const WS_URL = 'ws://localhost:8000/ws/status';
-        const CHAT_API = `${BACKEND_URL}/api/chat`;
-        
-        // State
-        let websocket = null;
-        let isConnecting = true;
-        
+        // Configuration for Cloud
+        const CHAT_API = `/api/query`;
+
         // ===================================================================
-        // WebSocket Management
+        // Status Display (Mocked for Cloud Serverless mode)
         // ===================================================================
         function initWebSocket() {
-            console.log('Connecting to WebSocket...');
-            
-            try {
-                websocket = new WebSocket(WS_URL);
-                
-                websocket.onopen = () => {
-                    console.log('WebSocket connected');
-                    updateStatus('websocket', 'connected', 'green');
-                    isConnecting = false;
-                };
-                
-                websocket.onmessage = (event) => {
-                    try {
-                        const message = JSON.parse(event.data);
-                        handleWebSocketMessage(message);
-                    } catch (e) {
-                        console.error('Failed to parse WebSocket message:', e);
-                    }
-                };
-                
-                websocket.onerror = (error) => {
-                    console.error('WebSocket error:', error);
-                    updateStatus('websocket', 'error', 'red');
-                };
-                
-                websocket.onclose = () => {
-                    console.log('WebSocket disconnected');
-                    updateStatus('websocket', 'disconnected', 'orange');
-                    // Attempt reconnection after 3 seconds
-                    setTimeout(initWebSocket, 3000);
-                };
-                
-            } catch (e) {
-                console.error('Failed to create WebSocket:', e);
-                updateStatus('websocket', 'failed', 'red');
-            }
+            console.log('Running in Serverless Cloud Mode');
+            updateStatus('websocket', 'cloud mode', 'green');
+            document.getElementById('statusText').textContent = 'System Online';
         }
-        
-        function handleWebSocketMessage(message) {
-            const type = message.type;
-            
-            if (type === 'system_status') {
-                addSystemMessage(`📡 ${message.status}`);
-            } else if (type === 'mesh_update') {
-                handleMeshUpdate(message.content);
-            } else if (type === 'chat_message' && message.role === 'assistant') {
-                addChatMessage('assistant', message.content);
-            }
-        }
-        
-        function handleMeshUpdate(updateData) {
-            const meshContainer = document.getElementById('meshUpdates');
-            
-            // Clear placeholder if it exists
-            if (meshContainer.innerHTML.includes('Waiting for mesh updates')) {
-                meshContainer.innerHTML = '';
-            }
-            
-            // Create update element
-            const updateDiv = document.createElement('div');
-            updateDiv.className = 'p-3 bg-blue-50 border-l-4 border-blue-500 rounded text-sm';
-            updateDiv.innerHTML = `
-                <div class="font-semibold text-blue-900">${updateData.status || 'Network Update'}</div>
-                <div class="text-xs text-gray-600 mt-1">${new Date(updateData.last_sync).toLocaleTimeString()}</div>
-                ${updateData.rssi ? `<div class="text-xs text-gray-600">Signal: ${updateData.rssi} dBm</div>` : ''}
-            `;
-            
-            meshContainer.insertBefore(updateDiv, meshContainer.firstChild);
-            
-            // Keep only last 5 updates
-            while (meshContainer.children.length > 5) {
-                meshContainer.removeChild(meshContainer.lastChild);
-            }
-        }
-        
-        // ===================================================================
-        // Status Display
-        // ===================================================================
+
         function updateStatus(component, status, color) {
             const statusElement = document.getElementById(`${component}Status`);
             if (statusElement) {
@@ -270,136 +191,99 @@
                     'red': 'bg-red-100 text-red-800',
                     'orange': 'bg-yellow-100 text-yellow-800'
                 };
-                
                 statusElement.className = `px-2 py-1 text-xs rounded-full ${colorMap[color]}`;
-                statusElement.textContent = `${color === 'green' ? '✓' : '✗'} ${statusText}`;
+                statusElement.textContent = `✓ ${statusText}`;
             }
         }
-        
+
         // ===================================================================
         // Chat Interface
         // ===================================================================
         function addChatMessage(role, content) {
             const messagesDiv = document.getElementById('chatMessages');
-            
-            // Clear placeholder if it exists
             if (messagesDiv.innerHTML.includes('Welcome to the Election Kiosk')) {
                 messagesDiv.innerHTML = '';
             }
-            
             const messageDiv = document.createElement('div');
             messageDiv.className = `message-animate flex ${role === 'user' ? 'justify-end' : 'justify-start'}`;
             messageDiv.innerHTML = `
                 <div class="max-w-xs lg:max-w-md px-4 py-3 rounded-lg ${
-                    role === 'user'
-                        ? 'bg-blue-600 text-white rounded-br-none'
-                        : 'bg-gray-200 text-gray-900 rounded-bl-none'
+                    role === 'user' ? 'bg-blue-600 text-white rounded-br-none' : 'bg-gray-200 text-gray-900 rounded-bl-none'
                 }">
                     <p class="text-sm">${escapeHtml(content)}</p>
                     <p class="text-xs mt-1 opacity-70">${new Date().toLocaleTimeString()}</p>
                 </div>
             `;
-            
             messagesDiv.appendChild(messageDiv);
-            
-            // Auto-scroll to bottom
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
-        
+
         function addSystemMessage(content) {
             const messagesDiv = document.getElementById('chatMessages');
-            
             if (messagesDiv.innerHTML.includes('Welcome to the Election Kiosk')) {
                 messagesDiv.innerHTML = '';
             }
-            
             const messageDiv = document.createElement('div');
             messageDiv.className = 'message-animate text-center';
             messageDiv.innerHTML = `<p class="text-xs text-gray-500 italic">${content}</p>`;
-            
             messagesDiv.appendChild(messageDiv);
         }
-        
+
         async function sendQuery() {
             const queryInput = document.getElementById('queryInput');
             const query = queryInput.value.trim();
-            
             if (!query) return;
             
-            // Add user message to chat
             addChatMessage('user', query);
             queryInput.value = '';
             
-            // Disable send button
             const sendBtn = document.getElementById('sendBtn');
             sendBtn.disabled = true;
             
             try {
-                // Show loading message
-                addSystemMessage('⏳ Processing your question...');
+                addSystemMessage('⏳ Gemini is analyzing election data...');
                 
-                // Send query to backend
+                // Pointing to the new Gemini Cloud Endpoint
                 const response = await fetch(CHAT_API, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ query: query })
+                    body: JSON.stringify({ question: query, source: "web" })
                 });
                 
                 if (response.ok) {
                     const data = await response.json();
-                    addChatMessage('assistant', data.response);
+                    // Remove the loading message
+                    document.getElementById('chatMessages').lastChild.remove();
+                    addChatMessage('assistant', data.answer);
                 } else {
-                    addChatMessage('assistant', '❌ Error processing query. Please try again.');
+                    addChatMessage('assistant', '❌ Error: Could not reach the Gemini backend.');
                 }
-                
             } catch (error) {
-                console.error('Error sending query:', error);
                 addChatMessage('assistant', `❌ Connection error: ${error.message}`);
             } finally {
                 sendBtn.disabled = false;
                 queryInput.focus();
             }
         }
-        
+
         // ===================================================================
-        // Event Listeners
+        // Event Listeners & Utilities
         // ===================================================================
         document.getElementById('sendBtn').addEventListener('click', sendQuery);
-        
         document.getElementById('queryInput').addEventListener('keypress', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 sendQuery();
             }
         });
-        
-        // ===================================================================
-        // Utility Functions
-        // ===================================================================
+
         function escapeHtml(text) {
-            const map = {
-                '&': '&amp;',
-                '<': '&lt;',
-                '>': '&gt;',
-                '"': '&quot;',
-                "'": '&#039;'
-            };
+            const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
             return text.replace(/[&<>"']/g, m => map[m]);
         }
-        
-        // ===================================================================
-        // Initialization
-        // ===================================================================
+
         document.addEventListener('DOMContentLoaded', () => {
-            console.log('Dashboard initializing...');
-            
-            // Update status text
-            document.getElementById('statusText').textContent = 'Connecting...';
-            
-            // Initialize WebSocket
             initWebSocket();
-            
-            // Focus on input
             document.getElementById('queryInput').focus();
         });
     </script>
