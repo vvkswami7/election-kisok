@@ -1,0 +1,50 @@
+# Python environment
+venv/
+.venv/
+env/
+
+# Local database
+chroma_db/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Environment files
+.env
+
+# Build and packaging
+*.egg-info/
+dist/
+build/
+
+# Test cache
+.pytest_cache/
+
+# Model cache
+.cache/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Node
+node_modules/
+
+# IDE settings
+.idea/
+.vscode/
+!.vscode/extensions.json
+
+# Always include important project files
+!election_data/*.txt
+!index.html
+!*.py
+!requirements.txt
+!Dockerfile
+!start.sh
+!README.md

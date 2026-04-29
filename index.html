@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Election Kiosk Dashboard</title>
+    
+    <!-- Tailwind CSS from CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Font Awesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <style>
+        /* Custom scrollbar styling */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+        
+        /* Animation for status indicator */
+        @keyframes pulse-dot {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .pulse-dot {
+            animation: pulse-dot 2s infinite;
+        }
+        
+        /* Smooth chat message animation */
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        .message-animate {
+            animation: slideIn 0.3s ease-out;
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div class="min-h-screen flex flex-col">
+        
+        <!-- ===== HEADER ===== -->
+        <header class="bg-gradient-to-r from-blue-600 to-blue-800 text-white shadow-lg">
+            <div class="container mx-auto px-4 py-4 md:py-6">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <i class="fas fa-landmark text-2xl md:text-3xl"></i>
+                        <h1 class="text-2xl md:text-3xl font-bold">Election Kiosk</h1>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <div class="text-right">
+                            <p class="text-sm opacity-90">System Status</p>
+                            <p class="font-semibold flex items-center gap-2">
+                                <span class="pulse-dot w-2 h-2 bg-green-400 rounded-full inline-block"></span>
+                                <span id="statusText">Connecting...</span>
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </header>
+        
+        <!-- ===== MAIN CONTENT ===== -->
+        <main class="flex-1 container mx-auto px-4 py-6 max-w-6xl">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                
+                <!-- ===== LEFT SIDEBAR: STATUS & UPDATES ===== -->
+                <aside class="md:col-span-1">
+                    <!-- System Status Card -->
+                    <div class="bg-white rounded-lg shadow-md p-5 mb-6">
+                        <h2 class="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
+                            <i class="fas fa-heartbeat text-red-500"></i> System Health
+                        </h2>
+                        <div class="space-y-3">
+                            <div class="flex items-center justify-between p-3 bg-gray-50 rounded">
+                                <span class="text-sm font-medium text-gray-700">Backend</span>
+                                <span class="px-2 py-1 bg-green-100 text-green-800 text-xs rounded-full" id="backendStatus">
+                                    ✓ Online
+                                </span>
+                            </div>
+                            <div class="flex items-center justify-between p-3 bg-gray-50 rounded">
+                                <span class="text-sm font-medium text-gray-700">ChromaDB</span>
+                                <span class="px-2 py-1 bg-green-100 text-green-800 text-xs rounded-full" id="chromadbStatus">
+                                    ✓ Connected
+                                </span>
+                            </div>
+                            <div class="flex items-center justify-between p-3 bg-gray-50 rounded">
+                                <span class="text-sm font-medium text-gray-700">WebSocket</span>
+                                <span class="px-2 py-1 bg-green-100 text-green-800 text-xs rounded-full" id="websocketStatus">
+                                    ✓ Connected
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Network Updates Card -->
+                    <div class="bg-white rounded-lg shadow-md p-5">
+                        <h2 class="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
+                            <i class="fas fa-wifi text-blue-500"></i> Network Updates
+                        </h2>
+                        <div id="meshUpdates" class="space-y-3 max-h-96 overflow-y-auto">
+                            <p class="text-sm text-gray-500 italic">Waiting for mesh updates...</p>
+                        </div>
+                    </div>
+                </aside>
+                
+                <!-- ===== RIGHT SIDE: CHAT INTERFACE ===== -->
+                <section class="md:col-span-2">
+                    <div class="bg-white rounded-lg shadow-lg flex flex-col h-screen md:h-auto md:max-h-96 md:flex-row">
+                        
+                        <!-- Chat Messages Area -->
+                        <div class="flex-1 flex flex-col bg-gradient-to-b from-blue-50 to-white">
+                            <!-- Messages Container -->
+                            <div id="chatMessages" class="flex-1 overflow-y-auto p-4 space-y-4">
+                                <div class="text-center text-gray-500 mt-8">
+                                    <i class="fas fa-comments text-4xl opacity-20 mb-2"></i>
+                                    <p class="text-sm">Welcome to the Election Kiosk</p>
+                                    <p class="text-xs opacity-70">Messages will appear here</p>
+                                </div>
+                            </div>
+                            
+                            <!-- Input Area -->
+                            <div class="border-t border-gray-200 p-4 bg-white">
+                                <div class="flex gap-2">
+                                    <input
+                                        type="text"
+                                        id="queryInput"
+                                        placeholder="Ask your election question..."
+                                        class="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                                    >
+                                    <button
+                                        id="sendBtn"
+                                        class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-2"
+                                    >
+                                        <i class="fas fa-paper-plane"></i>
+                                        <span class="hidden sm:inline">Send</span>
+                                    </button>
+                                </div>
+                                <p class="text-xs text-gray-500 mt-2">💡 Tip: Press Enter or click Send to submit your question</p>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </main>
+        
+        <!-- ===== FOOTER ===== -->
+        <footer class="bg-gray-800 text-gray-300 py-4 mt-8">
+            <div class="container mx-auto px-4 text-center text-sm">
+                <p>Offline Election Information Kiosk &copy; 2026 | Powered by Ollama + ChromaDB</p>
+            </div>
+        </footer>
+    </div>
+    
+    <!-- ===== JAVASCRIPT ===== -->
+    <script>
+        // Configuration
+        const BACKEND_URL = 'http://localhost:8000';
+        const WS_URL = 'ws://localhost:8000/ws/status';
+        const CHAT_API = `${BACKEND_URL}/api/chat`;
+        
+        // State
+        let websocket = null;
+        let isConnecting = true;
+        
+        // ===================================================================
+        // WebSocket Management
+        // ===================================================================
+        function initWebSocket() {
+            console.log('Connecting to WebSocket...');
+            
+            try {
+                websocket = new WebSocket(WS_URL);
+                
+                websocket.onopen = () => {
+                    console.log('WebSocket connected');
+                    updateStatus('websocket', 'connected', 'green');
+                    isConnecting = false;
+                };
+                
+                websocket.onmessage = (event) => {
+                    try {
+                        const message = JSON.parse(event.data);
+                        handleWebSocketMessage(message);
+                    } catch (e) {
+                        console.error('Failed to parse WebSocket message:', e);
+                    }
+                };
+                
+                websocket.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                    updateStatus('websocket', 'error', 'red');
+                };
+                
+                websocket.onclose = () => {
+                    console.log('WebSocket disconnected');
+                    updateStatus('websocket', 'disconnected', 'orange');
+                    // Attempt reconnection after 3 seconds
+                    setTimeout(initWebSocket, 3000);
+                };
+                
+            } catch (e) {
+                console.error('Failed to create WebSocket:', e);
+                updateStatus('websocket', 'failed', 'red');
+            }
+        }
+        
+        function handleWebSocketMessage(message) {
+            const type = message.type;
+            
+            if (type === 'system_status') {
+                addSystemMessage(`📡 ${message.status}`);
+            } else if (type === 'mesh_update') {
+                handleMeshUpdate(message.content);
+            } else if (type === 'chat_message' && message.role === 'assistant') {
+                addChatMessage('assistant', message.content);
+            }
+        }
+        
+        function handleMeshUpdate(updateData) {
+            const meshContainer = document.getElementById('meshUpdates');
+            
+            // Clear placeholder if it exists
+            if (meshContainer.innerHTML.includes('Waiting for mesh updates')) {
+                meshContainer.innerHTML = '';
+            }
+            
+            // Create update element
+            const updateDiv = document.createElement('div');
+            updateDiv.className = 'p-3 bg-blue-50 border-l-4 border-blue-500 rounded text-sm';
+            updateDiv.innerHTML = `
+                <div class="font-semibold text-blue-900">${updateData.status || 'Network Update'}</div>
+                <div class="text-xs text-gray-600 mt-1">${new Date(updateData.last_sync).toLocaleTimeString()}</div>
+                ${updateData.rssi ? `<div class="text-xs text-gray-600">Signal: ${updateData.rssi} dBm</div>` : ''}
+            `;
+            
+            meshContainer.insertBefore(updateDiv, meshContainer.firstChild);
+            
+            // Keep only last 5 updates
+            while (meshContainer.children.length > 5) {
+                meshContainer.removeChild(meshContainer.lastChild);
+            }
+        }
+        
+        // ===================================================================
+        // Status Display
+        // ===================================================================
+        function updateStatus(component, status, color) {
+            const statusElement = document.getElementById(`${component}Status`);
+            if (statusElement) {
+                const statusText = status.charAt(0).toUpperCase() + status.slice(1);
+                const colorMap = {
+                    'green': 'bg-green-100 text-green-800',
+                    'red': 'bg-red-100 text-red-800',
+                    'orange': 'bg-yellow-100 text-yellow-800'
+                };
+                
+                statusElement.className = `px-2 py-1 text-xs rounded-full ${colorMap[color]}`;
+                statusElement.textContent = `${color === 'green' ? '✓' : '✗'} ${statusText}`;
+            }
+        }
+        
+        // ===================================================================
+        // Chat Interface
+        // ===================================================================
+        function addChatMessage(role, content) {
+            const messagesDiv = document.getElementById('chatMessages');
+            
+            // Clear placeholder if it exists
+            if (messagesDiv.innerHTML.includes('Welcome to the Election Kiosk')) {
+                messagesDiv.innerHTML = '';
+            }
+            
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message-animate flex ${role === 'user' ? 'justify-end' : 'justify-start'}`;
+            messageDiv.innerHTML = `
+                <div class="max-w-xs lg:max-w-md px-4 py-3 rounded-lg ${
+                    role === 'user'
+                        ? 'bg-blue-600 text-white rounded-br-none'
+                        : 'bg-gray-200 text-gray-900 rounded-bl-none'
+                }">
+                    <p class="text-sm">${escapeHtml(content)}</p>
+                    <p class="text-xs mt-1 opacity-70">${new Date().toLocaleTimeString()}</p>
+                </div>
+            `;
+            
+            messagesDiv.appendChild(messageDiv);
+            
+            // Auto-scroll to bottom
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+        
+        function addSystemMessage(content) {
+            const messagesDiv = document.getElementById('chatMessages');
+            
+            if (messagesDiv.innerHTML.includes('Welcome to the Election Kiosk')) {
+                messagesDiv.innerHTML = '';
+            }
+            
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message-animate text-center';
+            messageDiv.innerHTML = `<p class="text-xs text-gray-500 italic">${content}</p>`;
+            
+            messagesDiv.appendChild(messageDiv);
+        }
+        
+        async function sendQuery() {
+            const queryInput = document.getElementById('queryInput');
+            const query = queryInput.value.trim();
+            
+            if (!query) return;
+            
+            // Add user message to chat
+            addChatMessage('user', query);
+            queryInput.value = '';
+            
+            // Disable send button
+            const sendBtn = document.getElementById('sendBtn');
+            sendBtn.disabled = true;
+            
+            try {
+                // Show loading message
+                addSystemMessage('⏳ Processing your question...');
+                
+                // Send query to backend
+                const response = await fetch(CHAT_API, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query: query })
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    addChatMessage('assistant', data.response);
+                } else {
+                    addChatMessage('assistant', '❌ Error processing query. Please try again.');
+                }
+                
+            } catch (error) {
+                console.error('Error sending query:', error);
+                addChatMessage('assistant', `❌ Connection error: ${error.message}`);
+            } finally {
+                sendBtn.disabled = false;
+                queryInput.focus();
+            }
+        }
+        
+        // ===================================================================
+        // Event Listeners
+        // ===================================================================
+        document.getElementById('sendBtn').addEventListener('click', sendQuery);
+        
+        document.getElementById('queryInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendQuery();
+            }
+        });
+        
+        // ===================================================================
+        // Utility Functions
+        // ===================================================================
+        function escapeHtml(text) {
+            const map = {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            };
+            return text.replace(/[&<>"']/g, m => map[m]);
+        }
+        
+        // ===================================================================
+        // Initialization
+        // ===================================================================
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log('Dashboard initializing...');
+            
+            // Update status text
+            document.getElementById('statusText').textContent = 'Connecting...';
+            
+            // Initialize WebSocket
+            initWebSocket();
+            
+            // Focus on input
+            document.getElementById('queryInput').focus();
+        });
+    </script>
+</body>
+</html>
