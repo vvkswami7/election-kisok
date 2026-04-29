@@ -382,7 +382,7 @@ async def health_check():
     }
 
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 async def root():
     return FileResponse("index.html")
 
