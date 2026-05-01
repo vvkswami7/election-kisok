@@ -18,4 +18,4 @@ RUN mkdir -p chroma_db
 ENV PORT=8080
 EXPOSE 8080
 
-CMD uvicorn backend:app --host 0.0.0.0 --port ${PORT} --log-level info
+CMD ["uvicorn", "backend:app", "--host", "0.0.0.0", "--port", "7860"]
