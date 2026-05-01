@@ -37,7 +37,7 @@ except Exception:
 
 load_dotenv()
 
-app = FastAPI(title="Election Kiosk Backend")
+app = FastAPI(title="Election Kiosk Backend", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -237,9 +237,7 @@ def query_gemini(prompt: str) -> str:
     try:
         response = gemini_client.models.generate_content(
             model="gemini-2.0-flash",
-            prompt=prompt,
-            temperature=0.2,
-            max_output_tokens=400,
+            contents=prompt,
         )
         if isinstance(response, dict):
             return str(response.get("content", response.get("output", ""))).strip()
@@ -387,7 +385,6 @@ async def root():
     return FileResponse("index.html")
 
 
-app.router.lifespan_context = lifespan
 
 
 if __name__ == "__main__":
