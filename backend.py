@@ -51,7 +51,7 @@ kiosk_stats: Dict[str, Any] = {
     "total_queries": 0,
     "total_lora_updates": 0,
     "startup_time": datetime.datetime.utcnow().isoformat() + "Z",
-    "model_used": "gemini-1.5-flash",
+    "model_used": "gemini-2.0-flash",
 }
 
 def log_cloud(payload: Dict[str, Any], severity: str = "INFO"):
@@ -222,7 +222,7 @@ def query_gemini(prompt: str) -> str:
         return "Gemini unavailable. I cannot answer your question at this time."
     try:
         response = gemini_client.models.generate_content(
-            model="gemini-1.5-flash",
+            model="gemini-2.0-flash",
             contents=prompt,
         )
         if hasattr(response, "text"):
