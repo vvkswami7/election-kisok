@@ -51,7 +51,6 @@ kiosk_stats: Dict[str, Any] = {
     "model_used": "gemini-2.0-flash",
 }
 
-
 def log_cloud(payload: Dict[str, Any], severity: str = "INFO"):
     global cloud_logger, cloud_logging_logger
     if cloud_logger is None or cloud_logging_logger is None:
@@ -60,7 +59,6 @@ def log_cloud(payload: Dict[str, Any], severity: str = "INFO"):
         cloud_logging_logger.log_struct(payload, severity=severity)
     except Exception:
         pass
-
 
 def chunk_text(text: str, size: int = 400, overlap: int = 80) -> List[str]:
     words = text.split()
@@ -71,11 +69,9 @@ def chunk_text(text: str, size: int = 400, overlap: int = 80) -> List[str]:
         i += size - overlap
     return chunks
 
-
 def load_election_data(collection: Any) -> None:
     data_dir = os.getenv("ELECTION_DATA_PATH", "election_data")
     if not os.path.isdir(data_dir):
-        print(f"[warning] election data directory not found: {data_dir}")
         return
 
     documents: List[str] = []
@@ -103,41 +99,28 @@ def load_election_data(collection: Any) -> None:
     if documents:
         try:
             collection.add(documents=documents, metadatas=metadatas, ids=ids)
-            print(f"[info] loaded {len(documents)} election text chunks into ChromaDB")
-        except Exception as exc:
-            print(f"[warning] failed to load election data into ChromaDB: {exc}")
-
+        except Exception:
+            pass
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global cloud_logger, cloud_logging_logger, gemini_client, chroma_collection, firebase_initialized
 
-    # Initialize Google Cloud Logging
     if cloud_logging is not None:
         try:
             cloud_logger = cloud_logging.Client()
             cloud_logging_logger = cloud_logger.logger("election_kiosk")
             log_cloud({"message": "startup", "service": "cloud_logging"}, severity="INFO")
-        except Exception as exc:
-            print(f"[warning] google cloud logging unavailable: {exc}")
-    else:
-        print("[warning] google-cloud-logging package not installed")
+        except Exception:
+            pass
 
-    # Initialize Gemini client
     gemini_api_key = os.getenv("GEMINI_API_KEY")
     if gemini_api_key and genai is not None:
         try:
             gemini_client = genai.Client(api_key=gemini_api_key)
-        except Exception as exc:
-            print(f"[warning] failed to initialize Gemini client: {exc}")
+        except Exception:
             gemini_client = None
-    else:
-        if not gemini_api_key:
-            print("[warning] GEMINI_API_KEY not set; Gemini will run in fallback mode")
-        else:
-            print("[warning] google-genai package not installed; Gemini disabled")
 
-    # Initialize ChromaDB
     if chromadb is not None and embedding_functions is not None:
         try:
             chroma_path = os.getenv("CHROMA_PATH", "./chroma_db")
@@ -152,27 +135,17 @@ async def lifespan(app: FastAPI):
             )
             if chroma_collection.count() == 0:
                 load_election_data(chroma_collection)
-        except Exception as exc:
-            print(f"[warning] failed to initialize ChromaDB: {exc}")
+        except Exception:
             chroma_collection = None
-    else:
-        print("[warning] chromadb or sentence-transformers not installed; RAG disabled")
 
-    # Initialize Firebase Admin
     if firebase_admin is not None:
         try:
-            firebase_url = os.getenv(
-                "FIREBASE_DATABASE_URL",
-                "https://election-kiosk-default-rtdb.firebaseio.com",
-            )
+            firebase_url = os.getenv("FIREBASE_DATABASE_URL", "https://election-kiosk-default-rtdb.firebaseio.com")
             if not firebase_admin._apps:
                 firebase_admin.initialize_app(options={"databaseURL": firebase_url})
             firebase_initialized = True
-        except Exception as exc:
-            print(f"[warning] firebase admin initialization failed: {exc}")
+        except Exception:
             firebase_initialized = False
-    else:
-        print("[warning] firebase-admin package not installed; realtime sync disabled")
 
     yield
 
@@ -192,7 +165,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Security headers for all responses
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
     response = await call_next(request)
@@ -204,7 +176,6 @@ async def add_security_headers(request: Request, call_next):
 def retrieve_context(query: str, n: int = 4) -> str:
     if chroma_collection is None:
         return ""
-
     try:
         results = chroma_collection.query(
             query_texts=[query],
@@ -214,11 +185,8 @@ def retrieve_context(query: str, n: int = 4) -> str:
     except Exception:
         return ""
 
-    documents = []
-    metadatas = []
-    if isinstance(results, dict):
-        documents = results.get("documents", [[]])[0] if results.get("documents") else []
-        metadatas = results.get("metadatas", [[]])[0] if results.get("metadatas") else []
+    documents = results.get("documents", [[]])[0] if results.get("documents") else []
+    metadatas = results.get("metadatas", [[]])[0] if results.get("metadatas") else []
 
     formatted: List[str] = []
     for idx, doc in enumerate(documents):
@@ -229,22 +197,19 @@ def retrieve_context(query: str, n: int = 4) -> str:
 
     return "\n\n".join(formatted)
 
-
 def query_gemini(prompt: str) -> str:
     if gemini_client is None:
         return "Gemini unavailable. I cannot answer your question at this time."
-
     try:
         response = gemini_client.models.generate_content(
             model="gemini-2.0-flash",
             contents=prompt,
         )
-        if isinstance(response, dict):
-            return str(response.get("content", response.get("output", ""))).strip()
-        return str(response).strip()
+        if hasattr(response, "text"):
+            return response.text
+        return str(response)
     except Exception as exc:
         return f"Gemini query failed: {exc}"
-
 
 def build_rag_prompt(question: str, context: str) -> str:
     return (
@@ -258,17 +223,14 @@ def build_rag_prompt(question: str, context: str) -> str:
         "ANSWER:"
     )
 
-
 class QueryPayload(BaseModel):
     question: str
     source: str = "text"
-
 
 class LoraUpdatePayload(BaseModel):
     update_type: str
     message: str
     timestamp: str
-
 
 @app.post("/api/query")
 async def api_query(payload: QueryPayload):
@@ -318,7 +280,6 @@ async def api_query(payload: QueryPayload):
         "source": payload.source,
     }
 
-
 @app.post("/api/lora-update")
 async def api_lora_update(payload: LoraUpdatePayload):
     entry = {
@@ -339,7 +300,6 @@ async def api_lora_update(payload: LoraUpdatePayload):
     kiosk_stats["total_lora_updates"] += 1
 
     return {"status": "received", "entry": entry}
-
 
 @app.get("/api/status")
 async def api_status():
@@ -365,7 +325,6 @@ async def api_status():
         "cpu_percent": psutil.cpu_percent(interval=0.1),
     }
 
-
 @app.get("/api/health")
 async def health_check():
     return {
@@ -379,16 +338,6 @@ async def health_check():
         },
     }
 
-
-@app.api_route("/", methods=["GET", "HEAD"])
+@app.get("/", methods=["GET", "HEAD"])
 async def root():
     return FileResponse("index.html")
-
-
-
-
-if __name__ == "__main__":
-    import uvicorn
-
-    port = int(os.getenv("PORT", 8000))
-    uvicorn.run("backend:app", host="0.0.0.0", port=port, reload=False)
