@@ -37,25 +37,6 @@ except Exception:
 
 load_dotenv()
 
-app = FastAPI(title="Election Kiosk Backend", lifespan=lifespan)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Security headers for all responses
-@app.middleware("http")
-async def add_security_headers(request: Request, call_next):
-    response = await call_next(request)
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
-    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    return response
-
 # Global state
 gemini_client: Optional[Any] = None
 chroma_collection: Optional[Any] = None
@@ -200,6 +181,25 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
 
+
+app = FastAPI(title="Election Kiosk Backend", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Security headers for all responses
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
 
 def retrieve_context(query: str, n: int = 4) -> str:
     if chroma_collection is None:
