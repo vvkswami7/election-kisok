@@ -17,6 +17,8 @@ __pycache__/
 *adminsdk*.json
 *service-account*.json
 firebase-credentials.json
+# Firebase service account / admin SDK credentials
+election-kiosk-b8d85-firebase-adminsdk-fbsvc-5b3fafaea5.json
 
 # Build and packaging
 *.egg-info/
