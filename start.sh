@@ -119,7 +119,7 @@ echo ""
 
 # Start Backend
 log_info "Starting Backend (FastAPI)..."
-python3 backend.py &
+python3 -m uvicorn backend:app --host 0.0.0.0 --port 8000 &
 BACKEND_PID=$!
 log_success "Backend started (PID: $BACKEND_PID)"
 

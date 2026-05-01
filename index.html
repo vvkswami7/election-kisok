@@ -163,7 +163,7 @@
         <!-- ===== FOOTER ===== -->
         <footer class="bg-gray-800 text-gray-300 py-4 mt-8">
             <div class="container mx-auto px-4 text-center text-sm">
-                <p>Offline Election Information Kiosk &copy; 2026 | Powered by Ollama + ChromaDB</p>
+                <p>Election Information Kiosk &copy; 2026 | Powered by Gemini 2.0 Flash + ChromaDB</p>
             </div>
         </footer>
     </div>
@@ -256,7 +256,10 @@
                     document.getElementById('chatMessages').lastChild.remove();
                     addChatMessage('assistant', data.answer);
                 } else {
-                    addChatMessage('assistant', '❌ Error: Could not reach the Gemini backend.');
+                    const body = await response.text();
+                    const errorMessage = body ? body : response.statusText;
+                    document.getElementById('chatMessages').lastChild.remove();
+                    addChatMessage('assistant', `❌ Error: Could not reach the Gemini backend. (${response.status} ${errorMessage})`);
                 }
             } catch (error) {
                 addChatMessage('assistant', `❌ Connection error: ${error.message}`);

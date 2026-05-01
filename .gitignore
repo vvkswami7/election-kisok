@@ -13,6 +13,10 @@ __pycache__/
 
 # Environment files
 .env
+*firebase-adminsdk*.json
+*adminsdk*.json
+*service-account*.json
+firebase-credentials.json
 
 # Build and packaging
 *.egg-info/
@@ -39,6 +43,7 @@ node_modules/
 .idea/
 .vscode/
 !.vscode/extensions.json
+.codex
 
 # Always include important project files
 !election_data/*.txt

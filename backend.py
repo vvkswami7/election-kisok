@@ -1,4 +1,5 @@
 import os
+import json
 import time
 import datetime
 from contextlib import asynccontextmanager
@@ -25,9 +26,11 @@ except Exception:
 
 try:
     import firebase_admin
+    from firebase_admin import credentials as firebase_credentials
     from firebase_admin import db as firebase_db
 except Exception:
     firebase_admin = None
+    firebase_credentials = None
     firebase_db = None
 
 try:
@@ -141,8 +144,25 @@ async def lifespan(app: FastAPI):
     if firebase_admin is not None:
         try:
             firebase_url = os.getenv("FIREBASE_DATABASE_URL", "https://election-kiosk-default-rtdb.firebaseio.com")
+            firebase_credential = None
+            firebase_service_account_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
+            firebase_credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+
+            if firebase_credentials is not None and firebase_service_account_json:
+                firebase_credential = firebase_credentials.Certificate(
+                    json.loads(firebase_service_account_json)
+                )
+            elif firebase_credentials is not None and firebase_credentials_path:
+                firebase_credential = firebase_credentials.Certificate(firebase_credentials_path)
+
             if not firebase_admin._apps:
-                firebase_admin.initialize_app(options={"databaseURL": firebase_url})
+                if firebase_credential is not None:
+                    firebase_admin.initialize_app(
+                        firebase_credential,
+                        {"databaseURL": firebase_url},
+                    )
+                else:
+                    firebase_admin.initialize_app(options={"databaseURL": firebase_url})
             firebase_initialized = True
         except Exception:
             firebase_initialized = False
@@ -338,6 +358,6 @@ async def health_check():
         },
     }
 
-@app.get("/", methods=["GET", "HEAD"])
+@app.api_route("/", methods=["GET", "HEAD"])
 async def root():
     return FileResponse("index.html")
