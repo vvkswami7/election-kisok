@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import time
 import datetime
 from contextlib import asynccontextmanager
@@ -40,6 +41,9 @@ except Exception:
 
 load_dotenv()
 
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+
 # Global state
 gemini_client: Optional[Any] = None
 chroma_collection: Optional[Any] = None
@@ -51,7 +55,7 @@ kiosk_stats: Dict[str, Any] = {
     "total_queries": 0,
     "total_lora_updates": 0,
     "startup_time": datetime.datetime.utcnow().isoformat() + "Z",
-    "model_used": "gemini-1.5-flash",
+    "model_used": GEMINI_MODEL,
 }
 
 def log_cloud(payload: Dict[str, Any], severity: str = "INFO"):
@@ -129,7 +133,7 @@ async def lifespan(app: FastAPI):
             chroma_path = os.getenv("CHROMA_PATH", "./chroma_db")
             chroma_client = chromadb.PersistentClient(path=chroma_path)
             embedding_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
-                model_name="paraphrase-albert-small-v2"
+                model_name=EMBEDDING_MODEL
             )
             chroma_collection = chroma_client.get_or_create_collection(
                 name="election_kb",
@@ -217,19 +221,40 @@ def retrieve_context(query: str, n: int = 4) -> str:
 
     return "\n\n".join(formatted)
 
-def query_gemini(prompt: str) -> str:
+def local_context_answer(context: str) -> str:
+    if not context:
+        return "I don't have that in my database."
+
+    context_without_sources = re.sub(r"\[Source: [^\]]+\]\s*", "", context).strip()
+    sentences = [
+        sentence.strip()
+        for sentence in re.split(r"(?<=[.!?])\s+", context_without_sources)
+        if sentence.strip()
+    ]
+    answer = " ".join(sentences[:3]).strip()
+    return answer if answer else "I don't have that in my database."
+
+def query_gemini(prompt: str) -> Optional[str]:
     if gemini_client is None:
-        return "Gemini unavailable. I cannot answer your question at this time."
+        return None
     try:
         response = gemini_client.models.generate_content(
-            model="gemini-1.5-flash",
+            model=GEMINI_MODEL,
             contents=prompt,
         )
         if hasattr(response, "text"):
             return response.text
         return str(response)
     except Exception as exc:
-        return f"Gemini query failed: {exc}"
+        error_text = str(exc)
+        log_cloud(
+            {
+                "message": "gemini_query_failed",
+                "error": error_text[:500],
+            },
+            severity="WARNING",
+        )
+        return None
 
 def build_rag_prompt(question: str, context: str) -> str:
     return (
@@ -262,6 +287,10 @@ async def api_query(payload: QueryPayload):
     context = retrieve_context(question)
     prompt = build_rag_prompt(question, context)
     answer = query_gemini(prompt)
+    model_used = kiosk_stats["model_used"]
+    if answer is None:
+        answer = local_context_answer(context)
+        model_used = "local-rag-fallback"
     latency_seconds = round(time.perf_counter() - start_time, 4)
     rag_chunks_used = context.count("[Source:") if context else 0
 
@@ -294,7 +323,7 @@ async def api_query(payload: QueryPayload):
         "question": question,
         "answer": answer,
         "latency_seconds": latency_seconds,
-        "model": kiosk_stats["model_used"],
+        "model": model_used,
         "rag_chunks_used": rag_chunks_used,
         "grounded": True,
         "source": payload.source,
