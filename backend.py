@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 import psutil
 from dotenv import load_dotenv
 
@@ -43,6 +43,21 @@ load_dotenv()
 
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60"))
+RATE_LIMIT_MAX_REQUESTS = int(os.getenv("RATE_LIMIT_MAX_REQUESTS", "20"))
+
+def csv_env(name: str, default: List[str]) -> List[str]:
+    raw_value = os.getenv(name)
+    if not raw_value:
+        return default
+    values = [value.strip() for value in raw_value.split(",") if value.strip()]
+    return values or default
+
+ALLOWED_ORIGINS = csv_env("ALLOWED_ORIGINS", ["*"])
+ALLOW_CREDENTIALS = "*" not in ALLOWED_ORIGINS
+
+def utc_now_iso() -> str:
+    return datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z")
 
 # Global state
 gemini_client: Optional[Any] = None
@@ -50,11 +65,12 @@ chroma_collection: Optional[Any] = None
 firebase_initialized = False
 cloud_logger: Optional[Any] = None
 cloud_logging_logger: Optional[Any] = None
+rate_limit_hits: Dict[str, List[float]] = {}
 
 kiosk_stats: Dict[str, Any] = {
     "total_queries": 0,
     "total_lora_updates": 0,
-    "startup_time": datetime.datetime.utcnow().isoformat() + "Z",
+    "startup_time": utc_now_iso(),
     "model_used": GEMINI_MODEL,
 }
 
@@ -183,10 +199,10 @@ app = FastAPI(title="Election Kiosk Backend", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=ALLOW_CREDENTIALS,
+    allow_methods=["GET", "POST", "HEAD", "OPTIONS"],
+    allow_headers=["Content-Type"],
 )
 
 @app.middleware("http")
@@ -195,7 +211,44 @@ async def add_security_headers(request: Request, call_next):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; "
+        "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; "
+        "font-src 'self' https://cdnjs.cloudflare.com data:; "
+        "img-src 'self' data:; "
+        "connect-src 'self'; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'"
+    )
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store"
     return response
+
+def enforce_rate_limit(request: Request) -> None:
+    if RATE_LIMIT_MAX_REQUESTS <= 0:
+        return
+
+    client_host = request.client.host if request.client else "unknown"
+    now = time.monotonic()
+    window_start = now - RATE_LIMIT_WINDOW_SECONDS
+    recent_hits = [
+        timestamp
+        for timestamp in rate_limit_hits.get(client_host, [])
+        if timestamp >= window_start
+    ]
+
+    if len(recent_hits) >= RATE_LIMIT_MAX_REQUESTS:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many requests. Please wait a moment before asking again.",
+        )
+
+    recent_hits.append(now)
+    rate_limit_hits[client_host] = recent_hits
 
 def retrieve_context(query: str, n: int = 4) -> str:
     if chroma_collection is None:
@@ -268,18 +321,30 @@ def build_rag_prompt(question: str, context: str) -> str:
         "ANSWER:"
     )
 
-class QueryPayload(BaseModel):
-    question: str
-    source: str = "text"
+class StrictPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
-class LoraUpdatePayload(BaseModel):
-    update_type: str
-    message: str
-    timestamp: str
+class QueryPayload(StrictPayload):
+    question: str = Field(..., min_length=1, max_length=500)
+    source: str = Field(default="text", max_length=30)
 
-@app.post("/api/query")
-async def api_query(payload: QueryPayload):
-    question = payload.question.strip()
+class ChatPayload(StrictPayload):
+    query: str = Field(..., min_length=1, max_length=500)
+
+class LoraUpdatePayload(StrictPayload):
+    update_type: str = Field(..., min_length=1, max_length=60)
+    message: str = Field(..., min_length=1, max_length=500)
+    timestamp: str = Field(..., min_length=1, max_length=80)
+
+class MeshUpdatePayload(StrictPayload):
+    status: str = Field(..., min_length=1, max_length=120)
+    rssi: Optional[int] = None
+    messages_queued: Optional[int] = None
+    last_sync: str = Field(..., min_length=1, max_length=80)
+    new_elections: Optional[List[str]] = None
+
+def answer_question(question: str, source: str) -> Dict[str, Any]:
+    question = question.strip()
     if not question:
         raise HTTPException(status_code=422, detail="Question must not be empty")
 
@@ -298,7 +363,7 @@ async def api_query(payload: QueryPayload):
         {
             "message": "voter_query",
             "question": question,
-            "source": payload.source,
+            "source": source,
             "latency_seconds": latency_seconds,
             "rag_chunks": rag_chunks_used,
         },
@@ -311,7 +376,10 @@ async def api_query(payload: QueryPayload):
                 {
                     "question": question,
                     "answer": answer,
-                    "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+                    "source": source,
+                    "model": model_used,
+                    "rag_chunks_used": rag_chunks_used,
+                    "timestamp": utc_now_iso(),
                 }
             )
         except Exception:
@@ -326,7 +394,22 @@ async def api_query(payload: QueryPayload):
         "model": model_used,
         "rag_chunks_used": rag_chunks_used,
         "grounded": True,
-        "source": payload.source,
+        "source": source,
+    }
+
+@app.post("/api/query")
+async def api_query(payload: QueryPayload, request: Request):
+    enforce_rate_limit(request)
+    return answer_question(payload.question, payload.source)
+
+@app.post("/api/chat")
+async def api_chat(payload: ChatPayload, request: Request):
+    enforce_rate_limit(request)
+    result = answer_question(payload.query, "edge")
+    return {
+        **result,
+        "response": result["answer"],
+        "context_used": [],
     }
 
 @app.post("/api/lora-update")
@@ -349,6 +432,26 @@ async def api_lora_update(payload: LoraUpdatePayload):
     kiosk_stats["total_lora_updates"] += 1
 
     return {"status": "received", "entry": entry}
+
+@app.post("/api/mesh-update")
+async def api_mesh_update(payload: MeshUpdatePayload):
+    details = [
+        f"status={payload.status}",
+        f"last_sync={payload.last_sync}",
+    ]
+    if payload.rssi is not None:
+        details.append(f"rssi={payload.rssi}")
+    if payload.messages_queued is not None:
+        details.append(f"messages_queued={payload.messages_queued}")
+    if payload.new_elections:
+        details.append(f"new_elections={', '.join(payload.new_elections)}")
+
+    lora_payload = LoraUpdatePayload(
+        update_type="mesh_update",
+        message="; ".join(details),
+        timestamp=payload.last_sync,
+    )
+    return await api_lora_update(lora_payload)
 
 @app.get("/api/status")
 async def api_status():
@@ -378,7 +481,7 @@ async def api_status():
 async def health_check():
     return {
         "status": "healthy",
-        "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+        "timestamp": utc_now_iso(),
         "services": {
             "gemini": gemini_client is not None,
             "chromadb": chroma_collection is not None,

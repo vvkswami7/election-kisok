@@ -97,7 +97,7 @@ log_success "Python3 is available"
 # Check for required Python packages
 log_info "Checking Python dependencies..."
 
-packages=("fastapi" "uvicorn" "chromadb" "ollama" "requests")
+packages=("fastapi" "uvicorn" "chromadb" "google.genai" "firebase_admin" "psutil" "requests")
 
 for package in "${packages[@]}"; do
     if python3 -c "import ${package}" 2>/dev/null; then

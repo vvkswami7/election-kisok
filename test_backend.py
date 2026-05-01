@@ -1,15 +1,49 @@
 # pytest.ini: asyncio_mode = auto, testpaths = .
 
-from fastapi.testclient import TestClient
+from contextlib import asynccontextmanager
+import asyncio
+
+import httpx
 import pytest
 
-from backend import app
+import backend
+
+app = backend.app
+
+
+@asynccontextmanager
+async def disabled_lifespan(_app):
+    yield
+
+
+app.router.lifespan_context = disabled_lifespan
+
+
+class ASGITestClient:
+    def request(self, method, url, **kwargs):
+        async def run_request():
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as c:
+                return await c.request(method, url, **kwargs)
+
+        return asyncio.run(run_request())
+
+    def get(self, url, **kwargs):
+        return self.request("GET", url, **kwargs)
+
+    def post(self, url, **kwargs):
+        return self.request("POST", url, **kwargs)
 
 
 @pytest.fixture(scope="module")
 def client():
-    with TestClient(app) as c:
-        yield c
+    return ASGITestClient()
+
+
+@pytest.fixture(autouse=True)
+def stable_backend(monkeypatch):
+    backend.rate_limit_hits.clear()
+    monkeypatch.setattr(backend, "gemini_client", None)
 
 
 class TestHealthEndpoint:
@@ -28,6 +62,13 @@ class TestHealthEndpoint:
     def test_health_timestamp_is_string(self, client):
         response = client.get("/api/health")
         assert isinstance(response.json().get("timestamp"), str)
+
+    def test_api_responses_include_security_headers(self, client):
+        response = client.get("/api/health")
+        assert response.headers.get("X-Content-Type-Options") == "nosniff"
+        assert response.headers.get("X-Frame-Options") == "DENY"
+        assert "default-src 'self'" in response.headers.get("Content-Security-Policy", "")
+        assert response.headers.get("Cache-Control") == "no-store"
 
 
 class TestStatusEndpoint:
@@ -86,6 +127,53 @@ class TestQueryEndpoint:
         )
         assert response.status_code == 422 or "error" in response.json()
 
+    def test_query_rejects_extra_fields(self, client):
+        response = client.post(
+            "/api/query",
+            json={
+                "question": "What documents should I bring?",
+                "source": "text",
+                "unexpected": "field",
+            },
+        )
+        assert response.status_code == 422
+
+    def test_query_uses_local_fallback_when_gemini_unavailable(self, client, monkeypatch):
+        monkeypatch.setattr(backend, "gemini_client", None)
+        monkeypatch.setattr(
+            backend,
+            "retrieve_context",
+            lambda _: "[Source: eligibility.txt]\nBring a valid EPIC or Voter ID.",
+        )
+
+        response = client.post(
+            "/api/query",
+            json={"question": "What document should I bring?", "source": "text"},
+        )
+
+        data = response.json()
+        assert response.status_code == 200
+        assert data["model"] == "local-rag-fallback"
+        assert "EPIC" in data["answer"]
+
+    def test_legacy_chat_endpoint_returns_edge_response(self, client, monkeypatch):
+        monkeypatch.setattr(backend, "gemini_client", None)
+        monkeypatch.setattr(
+            backend,
+            "retrieve_context",
+            lambda _: "[Source: timeline.txt]\nPhase 1 Polling is May 15, 2026.",
+        )
+
+        response = client.post(
+            "/api/chat",
+            json={"query": "When is phase 1 polling?"},
+        )
+
+        data = response.json()
+        assert response.status_code == 200
+        assert data["response"] == data["answer"]
+        assert "May 15, 2026" in data["response"]
+
 
 class TestLoraEndpoint:
     def test_lora_update_returns_200(self, client):
@@ -122,3 +210,17 @@ class TestLoraEndpoint:
         )
         after = client.get("/api/status").json().get("total_lora_updates", 0)
         assert after == before + 1
+
+    def test_mesh_update_alias_returns_200(self, client):
+        response = client.post(
+            "/api/mesh-update",
+            json={
+                "status": "Network Sync OK",
+                "rssi": -75,
+                "messages_queued": 0,
+                "last_sync": "2026-05-01T00:00:00Z",
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json().get("status") == "received"
