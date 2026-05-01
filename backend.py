@@ -129,7 +129,7 @@ async def lifespan(app: FastAPI):
             chroma_path = os.getenv("CHROMA_PATH", "./chroma_db")
             chroma_client = chromadb.PersistentClient(path=chroma_path)
             embedding_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
-                model_name="all-MiniLM-L6-v2"
+                model_name="paraphrase-albert-small-v2"
             )
             chroma_collection = chroma_client.get_or_create_collection(
                 name="election_kb",
