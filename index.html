@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" dir="ltr">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -111,9 +111,21 @@
                                 </span>
                             </div>
                             <div class="flex items-center justify-between p-3 bg-gray-50 rounded">
-                                <span class="text-sm font-medium text-gray-700">Cloud Mode</span>
-                                <span class="px-2 py-1 bg-green-100 text-green-800 text-xs rounded-full" id="websocketStatus" role="status" aria-live="polite">
-                                    Connected
+                                <span class="text-sm font-medium text-gray-700">Gemini</span>
+                                <span class="px-2 py-1 bg-yellow-100 text-yellow-800 text-xs rounded-full" id="geminiStatus" role="status" aria-live="polite">
+                                    Checking
+                                </span>
+                            </div>
+                            <div class="flex items-center justify-between p-3 bg-gray-50 rounded">
+                                <span class="text-sm font-medium text-gray-700">Firebase</span>
+                                <span class="px-2 py-1 bg-yellow-100 text-yellow-800 text-xs rounded-full" id="firebaseStatus" role="status" aria-live="polite">
+                                    Checking
+                                </span>
+                            </div>
+                            <div class="flex items-center justify-between p-3 bg-gray-50 rounded">
+                                <span class="text-sm font-medium text-gray-700">Cloud Logs</span>
+                                <span class="px-2 py-1 bg-yellow-100 text-yellow-800 text-xs rounded-full" id="cloudLoggingStatus" role="status" aria-live="polite">
+                                    Checking
                                 </span>
                             </div>
                         </div>
@@ -154,7 +166,11 @@
                                         type="text"
                                         id="queryInput"
                                         aria-label="Election question input"
+                                        aria-describedby="queryHelp"
                                         placeholder="Ask your election question..."
+                                        maxlength="500"
+                                        required
+                                        autocomplete="off"
                                         class="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                                     >
                                     <button
@@ -167,9 +183,9 @@
                                         <span class="hidden sm:inline">Send</span>
                                     </button>
                                 </form>
-                                <p class="text-xs text-gray-500 mt-2">
+                                <p id="queryHelp" class="text-xs text-gray-500 mt-2">
                                     <i class="fas fa-circle-info" aria-hidden="true"></i>
-                                    Press Enter or click Send to submit your question
+                                    Answers are limited to the local election database.
                                 </p>
                             </div>
                         </div>
@@ -190,14 +206,36 @@
     <script>
         // Configuration for Cloud
         const CHAT_API = `/api/query`;
+        const STATUS_API = `/api/status`;
 
         // ===================================================================
-        // Status Display (Mocked for Cloud Serverless mode)
+        // Status Display
         // ===================================================================
-        function initWebSocket() {
-            console.log('Running in Serverless Cloud Mode');
-            updateStatus('websocket', 'cloud mode', 'green');
-            document.getElementById('statusText').textContent = 'System Online';
+        function initStatusPanel() {
+            refreshStatus();
+            window.setInterval(refreshStatus, 30000);
+        }
+
+        async function refreshStatus() {
+            try {
+                const response = await fetch(STATUS_API, { cache: 'no-store' });
+                if (!response.ok) throw new Error(`Status ${response.status}`);
+
+                const data = await response.json();
+                updateStatus('backend', 'online', 'green');
+                updateStatus('chromadb', data.rag_chunks_loaded > 0 ? 'indexed' : 'empty', data.rag_chunks_loaded > 0 ? 'green' : 'orange');
+                updateStatus('gemini', data.gemini_available ? 'available' : 'fallback', data.gemini_available ? 'green' : 'orange');
+                updateStatus('firebase', data.firebase_connected ? 'connected' : 'offline', data.firebase_connected ? 'green' : 'orange');
+                updateStatus('cloudLogging', data.cloud_logging_active ? 'active' : 'local', data.cloud_logging_active ? 'green' : 'orange');
+                document.getElementById('statusText').textContent = data.gemini_available ? 'System Online' : 'Fallback Ready';
+            } catch (error) {
+                updateStatus('backend', 'offline', 'red');
+                updateStatus('chromadb', 'unknown', 'red');
+                updateStatus('gemini', 'unknown', 'red');
+                updateStatus('firebase', 'unknown', 'red');
+                updateStatus('cloudLogging', 'unknown', 'red');
+                document.getElementById('statusText').textContent = 'Disconnected';
+            }
         }
 
         function updateStatus(component, status, color) {
@@ -207,9 +245,10 @@
                 const colorMap = {
                     'green': 'bg-green-100 text-green-800',
                     'red': 'bg-red-100 text-red-800',
-                    'orange': 'bg-yellow-100 text-yellow-800'
+                    'orange': 'bg-yellow-100 text-yellow-800',
+                    'gray': 'bg-gray-100 text-gray-800'
                 };
-                statusElement.className = `px-2 py-1 text-xs rounded-full ${colorMap[color]}`;
+                statusElement.className = `px-2 py-1 text-xs rounded-full ${colorMap[color] || colorMap.gray}`;
                 statusElement.textContent = statusText;
             }
         }
@@ -279,6 +318,7 @@
             const sendBtn = document.getElementById('sendBtn');
             const messagesDiv = document.getElementById('chatMessages');
             sendBtn.disabled = true;
+            sendBtn.setAttribute('aria-disabled', 'true');
             messagesDiv.setAttribute('aria-busy', 'true');
             let loadingMessage = null;
             
@@ -314,6 +354,7 @@
                 addChatMessage('assistant', `Connection error: ${error.message}`);
             } finally {
                 sendBtn.disabled = false;
+                sendBtn.setAttribute('aria-disabled', 'false');
                 messagesDiv.setAttribute('aria-busy', 'false');
                 queryInput.focus();
             }
@@ -328,7 +369,7 @@
         });
 
         document.addEventListener('DOMContentLoaded', () => {
-            initWebSocket();
+            initStatusPanel();
             document.getElementById('queryInput').focus();
         });
     </script>

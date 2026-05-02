@@ -4,11 +4,10 @@ Simulates the physical kiosk interface by accepting terminal input
 and sending it to the backend chat endpoint
 """
 
-import json
 import logging
+import os
 import requests
 import sys
-from datetime import datetime
 from typing import Dict, Any
 
 # Configure logging
@@ -19,7 +18,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Configuration
-BACKEND_URL = "http://localhost:8000"
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000").rstrip("/")
 CHAT_ENDPOINT = f"{BACKEND_URL}/api/chat"
 HEALTH_ENDPOINT = f"{BACKEND_URL}/api/health"
 
@@ -36,7 +35,7 @@ class Colors:
     UNDERLINE = '\033[4m'
 
 
-def print_banner():
+def print_banner() -> None:
     """Print welcome banner"""
     banner = f"""
 {Colors.BOLD}{Colors.CYAN}
@@ -57,7 +56,7 @@ Type 'help' for example questions.
     print(banner)
 
 
-def print_help():
+def print_help() -> None:
     """Print example questions"""
     examples = [
         "When is the next election?",
@@ -84,7 +83,7 @@ def check_backend_health() -> bool:
         response = requests.get(HEALTH_ENDPOINT, timeout=3)
         if response.status_code == 200:
             return True
-    except Exception:
+    except requests.RequestException:
         pass
     return False
 
@@ -126,14 +125,14 @@ def send_query_to_backend(user_query: str) -> Dict[str, Any]:
             "error": "Timeout",
             "response": "Backend took too long to respond. Please try again."
         }
-    except Exception as e:
+    except (RuntimeError, ValueError, OSError) as exc:
         return {
-            "error": str(e),
+            "error": str(exc),
             "response": "An unexpected error occurred"
         }
 
 
-def display_response(response: Dict[str, Any]):
+def display_response(response: Dict[str, Any]) -> None:
     """
     Display AI response in a formatted way
     
@@ -158,14 +157,14 @@ def display_response(response: Dict[str, Any]):
     print()
 
 
-def main():
+def main() -> None:
     """Main interaction loop"""
     print_banner()
     
     # Check backend health
     if not check_backend_health():
         print(f"{Colors.RED}✗ Backend is not running!{Colors.END}")
-        print(f"{Colors.YELLOW}Please start the backend with: python backend.py{Colors.END}\n")
+        print(f"{Colors.YELLOW}Please start the backend with: uvicorn backend:app --reload{Colors.END}\n")
         sys.exit(1)
     
     print(f"{Colors.GREEN}✓ Backend is running and healthy{Colors.END}\n")
@@ -201,9 +200,9 @@ def main():
             
     except KeyboardInterrupt:
         print(f"\n\n{Colors.YELLOW}Interrupted by user. Shutting down...{Colors.END}\n")
-    except Exception as e:
-        logger.error(f"Unexpected error: {e}", exc_info=True)
-        print(f"{Colors.RED}An unexpected error occurred: {e}{Colors.END}\n")
+    except (RuntimeError, ValueError, OSError) as exc:
+        logger.error(f"Unexpected error: {exc}", exc_info=True)
+        print(f"{Colors.RED}An unexpected error occurred: {exc}{Colors.END}\n")
 
 
 if __name__ == "__main__":

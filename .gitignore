@@ -1,57 +1,43 @@
-# Python environment
+# Environment and secrets
+.env
+*.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# Virtual environments
 venv/
 .venv/
 env/
 
-# Local database
+# ChromaDB data
 chroma_db/
 
-# Python cache
-__pycache__/
-*.pyc
-*.pyo
-
-# Environment files
-.env
-*firebase-adminsdk*.json
-*adminsdk*.json
-*service-account*.json
-firebase-credentials.json
-# Firebase service account / admin SDK credentials
-election-kiosk-b8d85-firebase-adminsdk-fbsvc-5b3fafaea5.json
-
-# Build and packaging
-*.egg-info/
-dist/
-build/
-
-# Test cache
-.pytest_cache/
-
-# Model cache
+# Sentence transformer cache
 .cache/
+sentence_transformers/
 
 # OS files
 .DS_Store
 Thumbs.db
 
-# Logs
-*.log
-
-# Node
-node_modules/
-
-# IDE settings
+# IDE
 .idea/
-.vscode/
-!.vscode/extensions.json
-.codex
+.vscode/settings.json
+.vscode/launch.json
 
-# Always include important project files
-!election_data/*.txt
-!index.html
+# Always include key project files
+!package.json
 !*.py
 !requirements.txt
 !Dockerfile
 !start.sh
 !README.md
+!index.html
+!election_data/*.txt

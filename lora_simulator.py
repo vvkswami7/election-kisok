@@ -5,10 +5,10 @@ to the backend every 30 seconds
 """
 
 import time
-import json
 import logging
+import os
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any
 
 # Configure logging
@@ -19,9 +19,12 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Configuration
-BACKEND_URL = "http://localhost:8000"
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000").rstrip("/")
 MESH_UPDATE_ENDPOINT = f"{BACKEND_URL}/api/mesh-update"
 UPDATE_INTERVAL_SECONDS = 30  # Send update every 30 seconds
+
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 # Simulated LoRa network states
 LORA_STATES = [
@@ -29,20 +32,20 @@ LORA_STATES = [
         "status": "Network Sync OK",
         "rssi": -75,  # Signal strength
         "messages_queued": 0,
-        "last_sync": datetime.now().isoformat()
+        "last_sync": utc_now_iso()
     },
     {
         "status": "Sync in progress",
         "rssi": -82,
         "messages_queued": 3,
-        "last_sync": datetime.now().isoformat()
+        "last_sync": utc_now_iso()
     },
     {
         "status": "Network Sync Complete",
         "rssi": -70,
         "messages_queued": 0,
         "new_elections": ["Local Referendum 2026", "District Vote 2026"],
-        "last_sync": datetime.now().isoformat()
+        "last_sync": utc_now_iso()
     }
 ]
 
@@ -70,7 +73,7 @@ def generate_mesh_update() -> Dict[str, Any]:
     STATE_COUNTER += 1
     
     # Update timestamp to current time
-    update["last_sync"] = datetime.now().isoformat()
+    update["last_sync"] = utc_now_iso()
     
     return update
 
@@ -107,12 +110,12 @@ def send_mesh_update(update: Dict[str, Any]) -> bool:
     except requests.exceptions.Timeout:
         logger.error("✗ Request to backend timed out")
         return False
-    except Exception as e:
-        logger.error(f"✗ Error sending mesh update: {e}")
+    except (RuntimeError, ValueError, OSError) as exc:
+        logger.error(f"✗ Error sending mesh update: {exc}")
         return False
 
 
-def main():
+def main() -> None:
     """
     Main loop: Generate and send mesh updates every UPDATE_INTERVAL_SECONDS
     """
@@ -137,8 +140,8 @@ def main():
             
     except KeyboardInterrupt:
         logger.info("\nLoRa simulator shutting down...")
-    except Exception as e:
-        logger.error(f"Unexpected error in main loop: {e}", exc_info=True)
+    except (RuntimeError, ValueError, OSError) as exc:
+        logger.error(f"Unexpected error in main loop: {exc}", exc_info=True)
 
 
 if __name__ == "__main__":

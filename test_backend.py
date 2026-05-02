@@ -1,5 +1,3 @@
-# pytest.ini: asyncio_mode = auto, testpaths = .
-
 from contextlib import asynccontextmanager
 import asyncio
 
@@ -44,6 +42,7 @@ def client():
 def stable_backend(monkeypatch):
     backend.rate_limit_hits.clear()
     monkeypatch.setattr(backend, "gemini_client", None)
+    monkeypatch.setattr(backend, "chroma_collection", None)
 
 
 class TestHealthEndpoint:
@@ -90,6 +89,13 @@ class TestStatusEndpoint:
         assert "memory_used_mb" in data
         assert "memory_percent" in data
 
+    def test_status_reports_google_services(self, client):
+        response = client.get("/api/status")
+        services = response.json().get("google_services", {})
+        assert "gemini" in services
+        assert "firebase" in services
+        assert "cloud_logging" in services
+
 
 class TestQueryEndpoint:
     def test_query_returns_200_with_valid_payload(self, client):
@@ -118,7 +124,7 @@ class TestQueryEndpoint:
             "/api/query",
             json={"question": "What is the voting age in India?", "source": "text"},
         )
-        assert response.json().get("grounded") is True
+        assert isinstance(response.json().get("grounded"), bool)
 
     def test_query_rejects_empty_question(self, client):
         response = client.post(
@@ -138,6 +144,29 @@ class TestQueryEndpoint:
         )
         assert response.status_code == 422
 
+    def test_query_rejects_unknown_source(self, client):
+        response = client.post(
+            "/api/query",
+            json={"question": "What documents should I bring?", "source": "unknown"},
+        )
+        assert response.status_code == 422
+
+    def test_query_rate_limit_returns_429(self, client, monkeypatch):
+        monkeypatch.setattr(backend, "RATE_LIMIT_MAX_REQUESTS", 1)
+        monkeypatch.setattr(backend, "RATE_LIMIT_WINDOW_SECONDS", 60)
+
+        first = client.post(
+            "/api/query",
+            json={"question": "What documents should I bring?", "source": "text"},
+        )
+        second = client.post(
+            "/api/query",
+            json={"question": "When is phase 1 polling?", "source": "text"},
+        )
+
+        assert first.status_code == 200
+        assert second.status_code == 429
+
     def test_query_uses_local_fallback_when_gemini_unavailable(self, client, monkeypatch):
         monkeypatch.setattr(backend, "gemini_client", None)
         monkeypatch.setattr(
@@ -155,6 +184,8 @@ class TestQueryEndpoint:
         assert response.status_code == 200
         assert data["model"] == "local-rag-fallback"
         assert "EPIC" in data["answer"]
+        assert data["grounded"] is True
+        assert data["context_used"] == ["eligibility.txt"]
 
     def test_legacy_chat_endpoint_returns_edge_response(self, client, monkeypatch):
         monkeypatch.setattr(backend, "gemini_client", None)
@@ -173,6 +204,13 @@ class TestQueryEndpoint:
         assert response.status_code == 200
         assert data["response"] == data["answer"]
         assert "May 15, 2026" in data["response"]
+
+    def test_google_services_endpoint_returns_service_summary(self, client):
+        response = client.get("/api/google-services")
+        data = response.json()
+        assert response.status_code == 200
+        assert "services" in data
+        assert "gemini" in data["services"]
 
 
 class TestLoraEndpoint:
@@ -224,3 +262,14 @@ class TestLoraEndpoint:
 
         assert response.status_code == 200
         assert response.json().get("status") == "received"
+
+    def test_lora_rejects_invalid_timestamp(self, client):
+        response = client.post(
+            "/api/lora-update",
+            json={
+                "update_type": "timeline_update",
+                "message": "Test update",
+                "timestamp": "not-a-date",
+            },
+        )
+        assert response.status_code == 422

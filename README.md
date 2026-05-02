@@ -17,6 +17,7 @@ Election Kiosk is a FastAPI-based voter information assistant for low-connectivi
 - Gemini 1.5 Flash integration with a local RAG fallback when quota is exhausted.
 - Firebase Realtime Database persistence for voter queries and mesh updates.
 - Google Cloud Logging integration for structured backend events.
+- `/api/google-services` and `/api/status` summaries for Gemini, Firebase, and Cloud Logging readiness.
 - Accessible web UI with semantic landmarks, live regions, keyboard form submission, and reduced-motion support.
 - Security headers, stricter request validation, CORS hardening, API cache control, and basic request rate limiting.
 - Compatibility endpoints for the edge simulator (`/api/chat`) and LoRa mesh simulator (`/api/mesh-update`).
@@ -27,8 +28,8 @@ Election Kiosk is a FastAPI-based voter information assistant for low-connectivi
 2. ChromaDB retrieves relevant chunks from `election_data`.
 3. Gemini receives a context-grounded prompt and returns a concise answer.
 4. If Gemini is unavailable or quota-limited, the backend returns a local context answer.
-5. Query metadata and LoRa/mesh updates are stored in Firebase.
-6. Health, status, and structured logs expose operational state for deployment checks.
+5. Query metadata and LoRa/mesh updates are stored in Firebase when Firebase is configured.
+6. Health, status, Google-service readiness, and structured logs expose operational state for deployment checks.
 
 ## Services
 
@@ -39,7 +40,19 @@ Election Kiosk is a FastAPI-based voter information assistant for low-connectivi
 - Observability: Google Cloud Logging
 - Frontend: Static `index.html` served by FastAPI
 
+## API Endpoints
+
+- `POST /api/query` - primary kiosk question endpoint with grounded RAG metadata.
+- `POST /api/chat` - edge simulator compatibility endpoint.
+- `POST /api/lora-update` - stores mesh/radio updates.
+- `POST /api/mesh-update` - LoRa simulator compatibility endpoint.
+- `GET /api/status` - runtime counters, resource usage, RAG status, and Google-service readiness.
+- `GET /api/google-services` - concise Gemini, Firebase, and Cloud Logging integration status.
+- `GET /api/health` - lightweight health probe for deployment checks.
+
 ## Environment Variables
+
+Use `.env.example` as a safe template for local setup.
 
 Required:
 
@@ -56,6 +69,7 @@ Recommended:
 ```text
 GEMINI_MODEL=gemini-1.5-flash
 EMBEDDING_MODEL=all-MiniLM-L6-v2
+ANONYMIZED_TELEMETRY=False
 ALLOWED_ORIGINS=https://your-deployed-domain.example
 RATE_LIMIT_WINDOW_SECONDS=60
 RATE_LIMIT_MAX_REQUESTS=20
@@ -68,14 +82,14 @@ Do not commit `.env` files or Firebase service account JSON files. They are igno
 For a native Python deployment:
 
 ```bash
-pip install -r requirements.txt && python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+pip install -r requirements.txt && python3 -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
 ```
 
 ```bash
 uvicorn backend:app --host 0.0.0.0 --port $PORT
 ```
 
-For Hugging Face Spaces Docker deployment, the included `Dockerfile` exposes port `7860`.
+For Docker-based hosting, the included `Dockerfile` runs as a non-root user and honors the platform-provided `PORT` value, defaulting to `7860` for Hugging Face Spaces.
 
 ## Local Development
 
@@ -91,7 +105,7 @@ Then open `http://localhost:8000`.
 ## Tests
 
 ```bash
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q
+python3 -m pytest
 ```
 
-The tests cover health/status APIs, security headers, request validation, local Gemini fallback behavior, and simulator compatibility endpoints.
+The tests cover health/status APIs, Google-service readiness reporting, security headers, request validation, local Gemini fallback behavior, source grounding, timestamp validation, and simulator compatibility endpoints.
