@@ -700,7 +700,7 @@ async def api_status():
         "gemini_available": gemini_client is not None,
         "firebase_connected": firebase_initialized,
         "cloud_logging_active": cloud_logger is not None,
-        "google_services": google_services_status(),
+        "google_services": {k: v for k, v in google_services_status().items() if isinstance(v, dict)},
         "memory_used_mb": memory.used // (1024 * 1024),
         "memory_percent": memory.percent,
         "cpu_percent": psutil.cpu_percent(interval=0.1),
