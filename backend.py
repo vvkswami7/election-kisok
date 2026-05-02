@@ -681,7 +681,7 @@ async def api_mesh_update(payload: MeshUpdatePayload):
     )
     return await api_lora_update(lora_payload)
 
-@app.get("/api/status", response_model=StatusResponse)
+@app.get("/api/status")
 async def api_status():
     rag_chunks_loaded = 0
     try:
