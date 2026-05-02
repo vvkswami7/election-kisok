@@ -237,13 +237,17 @@ async def lifespan(app: FastAPI):
 
     if cloud_logging is not None:
         try:
-            cloud_logger = cloud_logging.Client(
-                project=os.getenv("GOOGLE_CLOUD_PROJECT")
-            )
-            cloud_logging_logger = cloud_logger.logger(GOOGLE_LOGGER_NAME)
-            log_cloud({"message": "startup", "service": "cloud_logging"}, severity="INFO")
-        except (RuntimeError, ValueError, AttributeError):
-            pass
+            _project = os.getenv("GOOGLE_CLOUD_PROJECT")
+            cloud_logger = cloud_logging.Client(project=_project) if _project else None
+            if cloud_logger:
+                cloud_logging_logger = cloud_logger.logger("election_kiosk")
+                print("[info] Google Cloud Logging initialized")
+            else:
+                print("[warning] GOOGLE_CLOUD_PROJECT not set, Cloud Logging disabled")
+        except (RuntimeError, OSError, ValueError) as exc:
+            print(f"[warning] Cloud Logging unavailable: {exc}")
+            cloud_logger = None
+            cloud_logging_logger = None
 
     gemini_api_key = os.getenv("GEMINI_API_KEY")
     if gemini_api_key and genai is not None:
