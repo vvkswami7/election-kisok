@@ -237,7 +237,9 @@ async def lifespan(app: FastAPI):
 
     if cloud_logging is not None:
         try:
-            cloud_logger = cloud_logging.Client()
+            cloud_logger = cloud_logging.Client(
+                project=os.getenv("GOOGLE_CLOUD_PROJECT")
+            )
             cloud_logging_logger = cloud_logger.logger(GOOGLE_LOGGER_NAME)
             log_cloud({"message": "startup", "service": "cloud_logging"}, severity="INFO")
         except (RuntimeError, ValueError, AttributeError):
