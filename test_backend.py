@@ -70,6 +70,16 @@ class TestHealthEndpoint:
         assert response.headers.get("Cache-Control") == "no-store"
 
 
+class TestSecurityConfig:
+    def test_default_cors_origins_are_explicit(self):
+        assert "*" not in backend.ALLOWED_ORIGINS
+        assert "http://localhost:8000" in backend.ALLOWED_ORIGINS
+
+    def test_default_trusted_hosts_are_not_wildcard(self):
+        assert "*" not in backend.ALLOWED_HOSTS
+        assert "testserver" in backend.ALLOWED_HOSTS
+
+
 class TestStatusEndpoint:
     def test_status_returns_200(self, client):
         response = client.get("/api/status")
@@ -91,10 +101,13 @@ class TestStatusEndpoint:
 
     def test_status_reports_google_services(self, client):
         response = client.get("/api/status")
-        services = response.json().get("google_services", {})
+        data = response.json()
+        services = data.get("google_services", {})
         assert "gemini" in services
         assert "firebase" in services
         assert "cloud_logging" in services
+        assert isinstance(data.get("google_services_total_active"), int)
+        assert isinstance(data.get("google_services_timestamp"), str)
 
 
 class TestQueryEndpoint:
@@ -167,6 +180,14 @@ class TestQueryEndpoint:
         assert first.status_code == 200
         assert second.status_code == 429
 
+    def test_check_rate_limit_helper_returns_boolean(self, monkeypatch):
+        monkeypatch.setattr(backend, "RATE_LIMIT_MAX_REQUESTS", 1)
+        monkeypatch.setattr(backend, "RATE_LIMIT_WINDOW_SECONDS", 60)
+
+        assert backend.check_rate_limit("198.51.100.9") is True
+        backend.record_rate_limit_hit("198.51.100.9")
+        assert backend.check_rate_limit("198.51.100.9") is False
+
     def test_query_uses_local_fallback_when_gemini_unavailable(self, client, monkeypatch):
         monkeypatch.setattr(backend, "gemini_client", None)
         monkeypatch.setattr(
@@ -211,6 +232,18 @@ class TestQueryEndpoint:
         assert response.status_code == 200
         assert "services" in data
         assert "gemini" in data["services"]
+        assert "description" in data["services"]["gemini"]
+        assert isinstance(data["total_active"], int)
+        assert isinstance(data["timestamp"], str)
+
+    def test_retrieve_context_sources_preserves_string_context_contract(self, monkeypatch):
+        monkeypatch.setattr(
+            backend,
+            "retrieve_context",
+            lambda _query, n=4: "[Source: eligibility.txt]\nVoter ID details.",
+        )
+
+        assert backend.retrieve_context_sources("What ID should I bring?") == ["eligibility.txt"]
 
 
 class TestLoraEndpoint:

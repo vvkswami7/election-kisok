@@ -6,7 +6,7 @@ import time
 import datetime
 from collections import deque
 from contextlib import asynccontextmanager
-from typing import Any, Deque, Dict, List, Literal, Optional
+from typing import Any, Deque, Dict, List, Literal, Optional, Tuple, Type
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -45,12 +45,29 @@ try:
 except (ImportError, ModuleNotFoundError):
     cloud_logging = None
 
+try:
+    from google.api_core.exceptions import GoogleAPIError
+    from google.auth.exceptions import GoogleAuthError
+except (ImportError, ModuleNotFoundError):
+    GoogleAPIError = RuntimeError
+    GoogleAuthError = RuntimeError
+
 load_dotenv()
 
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+DEFAULT_GEMINI_MODEL = "gemini-1.5-flash"
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
 CHROMA_COLLECTION_NAME = "election_kb"
 GOOGLE_LOGGER_NAME = "election_kiosk"
+GOOGLE_SERVICE_ERRORS: Tuple[Type[BaseException], ...] = (
+    RuntimeError,
+    ValueError,
+    TypeError,
+    AttributeError,
+    OSError,
+    GoogleAPIError,
+    GoogleAuthError,
+)
 
 def int_env(name: str, default: int, minimum: int = 0) -> int:
     raw_value = os.getenv(name)
@@ -76,14 +93,31 @@ ALLOWED_ORIGINS = csv_env(
     "ALLOWED_ORIGINS",
     [
         "http://localhost",
+        "http://localhost:8000",
+        "http://localhost:7860",
         "http://localhost:3000",
         "http://localhost:5000",
         "http://127.0.0.1",
+        "http://127.0.0.1:8000",
+        "http://127.0.0.1:7860",
         "http://127.0.0.1:3000",
         "http://127.0.0.1:5000",
     ],
 )
 ALLOW_CREDENTIALS = "*" not in ALLOWED_ORIGINS
+ALLOWED_HOSTS = csv_env(
+    "ALLOWED_HOSTS",
+    [
+        "testserver",
+        "localhost",
+        "127.0.0.1",
+        "*.localhost",
+        "*.hf.space",
+        "*.onrender.com",
+        "*.render.com",
+        "*.run.app",
+    ],
+)
 
 def utc_now_iso() -> str:
     return datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z")
@@ -158,7 +192,7 @@ def load_election_data(collection: Any) -> None:
         try:
             with open(path, "r", encoding="utf-8") as handle:
                 text = handle.read().strip()
-        except (OSError, IOError, FileNotFoundError, UnicodeDecodeError):
+        except (OSError, UnicodeDecodeError):
             continue
 
         if not text:
@@ -172,7 +206,7 @@ def load_election_data(collection: Any) -> None:
     if documents:
         try:
             upsert_documents(collection, documents, metadatas, ids)
-        except (RuntimeError, ValueError, TypeError) as exc:
+        except (RuntimeError, ValueError, TypeError, AttributeError) as exc:
             log_cloud(
                 {
                     "message": "election_data_load_failed",
@@ -181,14 +215,8 @@ def load_election_data(collection: Any) -> None:
                 severity="WARNING",
             )
 
-def google_services_status() -> Dict[str, Any]:
+def google_service_details() -> Dict[str, Dict[str, Any]]:
     firebase_database_url = os.getenv("FIREBASE_DATABASE_URL", "")
-    active_services = sum([
-        gemini_client is not None,
-        chroma_collection is not None,
-        firebase_initialized,
-        cloud_logger is not None,
-    ])
     return {
         "gemini": {
             "available": gemini_client is not None,
@@ -219,7 +247,18 @@ def google_services_status() -> Dict[str, Any]:
             "sdk_installed": chromadb is not None,
             "description": "ChromaDB for RAG knowledge base storage",
         },
-        "total_active": active_services,
+    }
+
+def google_services_status() -> Dict[str, Any]:
+    services = google_service_details()
+    total_active = sum(
+        1
+        for service in services.values()
+        if bool(service.get("available"))
+    )
+    return {
+        "services": services,
+        "total_active": total_active,
         "timestamp": utc_now_iso(),
     }
 
@@ -237,15 +276,11 @@ async def lifespan(app: FastAPI):
 
     if cloud_logging is not None:
         try:
-            _project = os.getenv("GOOGLE_CLOUD_PROJECT")
-            cloud_logger = cloud_logging.Client(project=_project) if _project else None
-            if cloud_logger:
-                cloud_logging_logger = cloud_logger.logger("election_kiosk")
-                print("[info] Google Cloud Logging initialized")
-            else:
-                print("[warning] GOOGLE_CLOUD_PROJECT not set, Cloud Logging disabled")
-        except (RuntimeError, OSError, ValueError) as exc:
-            print(f"[warning] Cloud Logging unavailable: {exc}")
+            google_cloud_project = os.getenv("GOOGLE_CLOUD_PROJECT") or None
+            cloud_logger = cloud_logging.Client(project=google_cloud_project)
+            cloud_logging_logger = cloud_logger.logger(GOOGLE_LOGGER_NAME)
+            log_cloud({"message": "startup", "service": "cloud_logging"}, severity="INFO")
+        except GOOGLE_SERVICE_ERRORS:
             cloud_logger = None
             cloud_logging_logger = None
 
@@ -253,7 +288,7 @@ async def lifespan(app: FastAPI):
     if gemini_api_key and genai is not None:
         try:
             gemini_client = genai.Client(api_key=gemini_api_key)
-        except (RuntimeError, ValueError, TypeError):
+        except GOOGLE_SERVICE_ERRORS:
             gemini_client = None
 
     if chromadb is not None and embedding_functions is not None:
@@ -277,7 +312,7 @@ async def lifespan(app: FastAPI):
             )
             if chroma_collection.count() == 0:
                 load_election_data(chroma_collection)
-        except (RuntimeError, ValueError, AttributeError, OSError):
+        except (RuntimeError, ValueError, AttributeError, OSError, TypeError):
             chroma_collection = None
 
     firebase_url = os.getenv("FIREBASE_DATABASE_URL", "")
@@ -303,15 +338,12 @@ async def lifespan(app: FastAPI):
                 else:
                     firebase_admin.initialize_app(options={"databaseURL": firebase_url})
             firebase_initialized = True
-        except (RuntimeError, ValueError, json.JSONDecodeError, OSError):
+        except (RuntimeError, ValueError, json.JSONDecodeError, OSError, TypeError):
             firebase_initialized = False
 
     yield
 
-    try:
-        log_cloud({"message": "shutdown", "service": "backend"}, severity="INFO")
-    except (RuntimeError, AttributeError, TypeError):
-        pass
+    log_cloud({"message": "shutdown", "service": "backend"}, severity="INFO")
 
 
 app = FastAPI(title="Election Kiosk Backend", lifespan=lifespan)
@@ -326,15 +358,7 @@ app.add_middleware(
 
 app.add_middleware(
     TrustedHostMiddleware,
-    allowed_hosts=[
-        "localhost",
-        "127.0.0.1",
-        "*.localhost",
-        "*.hf.space",
-        "*.onrender.com",
-        "*.render.com",
-        "*",
-    ],
+    allowed_hosts=ALLOWED_HOSTS,
 )
 
 @app.middleware("http")
@@ -361,43 +385,38 @@ async def add_security_headers(request: Request, call_next):
         response.headers["Cache-Control"] = "no-store"
     return response
 
-def enforce_rate_limit(request: Request) -> None:
-    if RATE_LIMIT_MAX_REQUESTS <= 0:
-        return
+def client_ip_from_request(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
 
-    client_host = request.client.host if request.client else "unknown"
-    now = time.monotonic()
+def prune_rate_limit_hits(client_ip: str, now: float) -> Deque[float]:
     window_start = now - RATE_LIMIT_WINDOW_SECONDS
-    recent_hits = rate_limit_hits.setdefault(client_host, deque())
+    recent_hits = rate_limit_hits.setdefault(client_ip, deque())
     while recent_hits and recent_hits[0] < window_start:
         recent_hits.popleft()
-
-    if len(recent_hits) >= RATE_LIMIT_MAX_REQUESTS:
-        raise HTTPException(
-            status_code=429,
-            detail="Too many requests. Please wait a moment before asking again.",
-        )
-
-    recent_hits.append(now)
+    return recent_hits
 
 def check_rate_limit(client_ip: str) -> bool:
-    """
-    Check if a client IP is within the rate limit without raising an exception.
-    Returns True if the request is allowed, False if rate limited.
-    Does not record a new hit; only checks the current state.
-    """
     if RATE_LIMIT_MAX_REQUESTS <= 0:
         return True
 
     now = time.monotonic()
-    window_start = now - RATE_LIMIT_WINDOW_SECONDS
-    recent_hits = rate_limit_hits.get(client_ip, deque())
-    
-    # Clean old hits outside the window
-    while recent_hits and recent_hits[0] < window_start:
-        recent_hits.popleft()
-    
+    recent_hits = prune_rate_limit_hits(client_ip, now)
     return len(recent_hits) < RATE_LIMIT_MAX_REQUESTS
+
+def record_rate_limit_hit(client_ip: str) -> None:
+    if RATE_LIMIT_MAX_REQUESTS <= 0:
+        return
+    now = time.monotonic()
+    prune_rate_limit_hits(client_ip, now).append(now)
+
+def enforce_rate_limit(request: Request) -> None:
+    client_ip = client_ip_from_request(request)
+    if not check_rate_limit(client_ip):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many requests. Please wait a moment before asking again.",
+        )
+    record_rate_limit_hit(client_ip)
 
 def retrieve_context(query: str, n: int = 4) -> str:
     if chroma_collection is None:
@@ -408,7 +427,9 @@ def retrieve_context(query: str, n: int = 4) -> str:
             n_results=n,
             include=["documents", "metadatas"],
         )
-    except RuntimeError:
+    except (RuntimeError, ValueError, TypeError, AttributeError):
+        return ""
+    if not isinstance(results, dict):
         return ""
 
     documents = results.get("documents", [[]])[0] if results.get("documents") else []
@@ -429,6 +450,9 @@ def extract_context_sources(context: str) -> List[str]:
         if source not in sources:
             sources.append(source)
     return sources
+
+def retrieve_context_sources(query: str, n: int = 4) -> List[str]:
+    return extract_context_sources(retrieve_context(query, n=n))
 
 def local_context_answer(context: str) -> str:
     if not context:
@@ -454,7 +478,7 @@ def query_gemini(prompt: str) -> Optional[str]:
         answer = response.text if hasattr(response, "text") else str(response)
         answer = answer.strip()
         return answer or None
-    except (RuntimeError, ValueError, AttributeError, TypeError) as exc:
+    except GOOGLE_SERVICE_ERRORS as exc:
         error_text = str(exc)
         log_cloud(
             {
@@ -482,7 +506,7 @@ class StrictPayload(BaseModel):
 
 class QueryPayload(StrictPayload):
     question: str = Field(..., min_length=1, max_length=500)
-    source: Literal["text", "voice", "web"] = "text"
+    source: Literal["text", "voice", "web", "edge", "simulator"] = "text"
 
 class ChatPayload(StrictPayload):
     query: str = Field(..., min_length=1, max_length=500)
@@ -494,25 +518,8 @@ class LoraUpdatePayload(StrictPayload):
 
     @field_validator("timestamp")
     @classmethod
-    def validate_timestamp(cls, v: str) -> str:
-        from datetime import datetime
-        for fmt in (
-            "%Y-%m-%dT%H:%M:%SZ",
-            "%Y-%m-%dT%H:%M:%S.%fZ", 
-            "%Y-%m-%dT%H:%M:%S+00:00",
-        ):
-            try:
-                datetime.strptime(v, fmt)
-                return v
-            except ValueError:
-                continue
-        try:
-            datetime.fromisoformat(v.replace("Z", "+00:00"))
-            return v
-        except ValueError:
-            raise ValueError(
-                f"timestamp must be a valid ISO 8601 datetime, got: {v!r}"
-            )
+    def timestamp_must_be_iso8601(cls, value: str) -> str:
+        return validate_iso_timestamp(value)
 
 class MeshUpdatePayload(StrictPayload):
     status: str = Field(..., min_length=1, max_length=120)
@@ -558,6 +565,8 @@ class StatusResponse(BaseModel):
     firebase_connected: bool
     cloud_logging_active: bool
     google_services: Dict[str, Dict[str, Any]]
+    google_services_total_active: int
+    google_services_timestamp: str
     memory_used_mb: int
     memory_percent: float
     cpu_percent: float
@@ -569,6 +578,8 @@ class HealthResponse(BaseModel):
 
 class GoogleServicesResponse(BaseModel):
     services: Dict[str, Dict[str, Any]]
+    total_active: int
+    timestamp: str
 
 def answer_question(question: str, source: str) -> Dict[str, Any]:
     question = question.strip()
@@ -610,7 +621,7 @@ def answer_question(question: str, source: str) -> Dict[str, Any]:
                     "timestamp": utc_now_iso(),
                 }
             )
-        except RuntimeError:
+        except (RuntimeError, ValueError, TypeError, AttributeError, OSError):
             pass
 
     kiosk_stats["total_queries"] += 1
@@ -654,7 +665,7 @@ async def api_lora_update(payload: LoraUpdatePayload):
     if firebase_initialized and firebase_db is not None:
         try:
             firebase_db.reference("/kiosk/lora_updates").push(entry)
-        except RuntimeError:
+        except (RuntimeError, ValueError, TypeError, AttributeError, OSError):
             pass
 
     kiosk_stats["total_lora_updates"] += 1
@@ -681,15 +692,16 @@ async def api_mesh_update(payload: MeshUpdatePayload):
     )
     return await api_lora_update(lora_payload)
 
-@app.get("/api/status")
+@app.get("/api/status", response_model=StatusResponse)
 async def api_status():
     rag_chunks_loaded = 0
     try:
         rag_chunks_loaded = chroma_collection.count() if chroma_collection is not None else 0
-    except RuntimeError:
+    except (RuntimeError, ValueError, TypeError, AttributeError):
         rag_chunks_loaded = 0
 
     memory = psutil.virtual_memory()
+    google_services = google_services_status()
 
     return {
         "total_queries": kiosk_stats["total_queries"],
@@ -700,7 +712,9 @@ async def api_status():
         "gemini_available": gemini_client is not None,
         "firebase_connected": firebase_initialized,
         "cloud_logging_active": cloud_logger is not None,
-        "google_services": {k: v for k, v in google_services_status().items() if isinstance(v, dict)},
+        "google_services": google_services["services"],
+        "google_services_total_active": google_services["total_active"],
+        "google_services_timestamp": google_services["timestamp"],
         "memory_used_mb": memory.used // (1024 * 1024),
         "memory_percent": memory.percent,
         "cpu_percent": psutil.cpu_percent(interval=0.1),
@@ -721,7 +735,7 @@ async def health_check():
 
 @app.get("/api/google-services", response_model=GoogleServicesResponse)
 async def api_google_services():
-    return {"services": google_services_status()}
+    return google_services_status()
 
 @app.api_route("/", methods=["GET", "HEAD"])
 async def root() -> FileResponse:
