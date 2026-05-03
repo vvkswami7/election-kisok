@@ -129,6 +129,9 @@
                                 </span>
                             </div>
                         </div>
+                        <div id="serviceNote" class="mt-4 border-t border-gray-100 pt-3 text-xs leading-relaxed text-gray-600" role="note">
+                            Checking service configuration...
+                        </div>
                     </div>
                     
                     <!-- Network Updates Card -->
@@ -144,7 +147,18 @@
                 
                 <!-- ===== RIGHT SIDE: CHAT INTERFACE ===== -->
                 <section class="md:col-span-2" aria-labelledby="chatHeading">
-                    <h2 id="chatHeading" class="sr-only">Election question chat</h2>
+                    <div class="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <h2 id="chatHeading" class="text-lg font-bold text-gray-800">Election Question Desk</h2>
+                        <button
+                            type="button"
+                            id="clearChatBtn"
+                            class="inline-flex items-center justify-center gap-2 rounded bg-gray-200 px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            aria-label="Clear chat messages"
+                        >
+                            <i class="fas fa-rotate-left" aria-hidden="true"></i>
+                            <span>Reset</span>
+                        </button>
+                    </div>
                     <div class="bg-white rounded-lg shadow-lg flex flex-col h-screen md:h-auto md:max-h-96 md:flex-row">
                         
                         <!-- Chat Messages Area -->
@@ -154,7 +168,13 @@
                                 <div id="welcomeMessage" class="text-center text-gray-500 mt-8">
                                     <i class="fas fa-comments text-4xl opacity-20 mb-2" aria-hidden="true"></i>
                                     <p class="text-sm">Welcome to the Election Kiosk</p>
-                                    <p class="text-xs opacity-70">Messages will appear here</p>
+                                    <p class="text-xs opacity-70">Choose a common question or type your own.</p>
+                                    <div id="quickQuestions" class="mt-5 flex flex-wrap justify-center gap-2 px-2" aria-label="Suggested election questions">
+                                        <button type="button" class="quick-question rounded bg-white px-3 py-2 text-xs font-medium text-blue-700 shadow-sm ring-1 ring-blue-100 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500" data-question="What is the voting age in India?">Voting age</button>
+                                        <button type="button" class="quick-question rounded bg-white px-3 py-2 text-xs font-medium text-blue-700 shadow-sm ring-1 ring-blue-100 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500" data-question="What ID documents can I carry to vote?">Accepted IDs</button>
+                                        <button type="button" class="quick-question rounded bg-white px-3 py-2 text-xs font-medium text-blue-700 shadow-sm ring-1 ring-blue-100 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500" data-question="When are the election phases?">Election phases</button>
+                                        <button type="button" class="quick-question rounded bg-white px-3 py-2 text-xs font-medium text-blue-700 shadow-sm ring-1 ring-blue-100 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500" data-question="What is the voter registration deadline?">Registration deadline</button>
+                                    </div>
                                 </div>
                             </div>
                             
@@ -197,7 +217,7 @@
         <!-- ===== FOOTER ===== -->
         <footer class="bg-gray-800 text-gray-300 py-4 mt-8">
             <div class="container mx-auto px-4 text-center text-sm">
-                <p>Election Information Kiosk &copy; 2026 | Powered by Gemini 2.0 Flash + ChromaDB</p>
+                <p>Election Information Kiosk &copy; 2026 | Powered by <span id="modelLabel">Gemini + ChromaDB</span></p>
             </div>
         </footer>
     </div>
@@ -207,6 +227,12 @@
         // Configuration for Cloud
         const CHAT_API = `/api/query`;
         const STATUS_API = `/api/status`;
+        const QUICK_QUESTIONS = [
+            { label: 'Voting age', question: 'What is the voting age in India?' },
+            { label: 'Accepted IDs', question: 'What ID documents can I carry to vote?' },
+            { label: 'Election phases', question: 'When are the election phases?' },
+            { label: 'Registration deadline', question: 'What is the voter registration deadline?' }
+        ];
 
         // ===================================================================
         // Status Display
@@ -224,16 +250,24 @@
                 const data = await response.json();
                 updateStatus('backend', 'online', 'green');
                 updateStatus('chromadb', data.rag_chunks_loaded > 0 ? 'indexed' : 'empty', data.rag_chunks_loaded > 0 ? 'green' : 'orange');
-                updateStatus('gemini', data.gemini_available ? 'available' : 'fallback', data.gemini_available ? 'green' : 'orange');
-                updateStatus('firebase', data.firebase_connected ? 'connected' : 'offline', data.firebase_connected ? 'green' : 'orange');
+                const services = data.google_services || {};
+                const firebase = services.firebase || {};
+                const gemini = services.gemini || {};
+                const firebaseStatus = data.firebase_connected ? 'connected' : (firebase.configured ? 'offline' : 'not set');
+                const geminiStatus = data.gemini_available ? 'available' : (gemini.configured ? 'fallback' : 'local');
+                updateStatus('gemini', geminiStatus, data.gemini_available ? 'green' : 'orange');
+                updateStatus('firebase', firebaseStatus, data.firebase_connected ? 'green' : 'orange');
                 updateStatus('cloudLogging', data.cloud_logging_active ? 'active' : 'local', data.cloud_logging_active ? 'green' : 'orange');
-                document.getElementById('statusText').textContent = data.gemini_available ? 'System Online' : 'Fallback Ready';
+                updateServiceNote(data);
+                updateModelLabel(data.model_used);
+                document.getElementById('statusText').textContent = data.rag_chunks_loaded > 0 ? 'System Online' : 'Setup Needed';
             } catch (error) {
                 updateStatus('backend', 'offline', 'red');
                 updateStatus('chromadb', 'unknown', 'red');
                 updateStatus('gemini', 'unknown', 'red');
                 updateStatus('firebase', 'unknown', 'red');
                 updateStatus('cloudLogging', 'unknown', 'red');
+                document.getElementById('serviceNote').textContent = 'The backend status endpoint is unreachable. Check whether the server is still running.';
                 document.getElementById('statusText').textContent = 'Disconnected';
             }
         }
@@ -253,9 +287,79 @@
             }
         }
 
+        function updateServiceNote(data) {
+            const note = document.getElementById('serviceNote');
+            const services = data.google_services || {};
+            const firebase = services.firebase || {};
+            const activeCount = typeof data.google_services_total_active === 'number'
+                ? data.google_services_total_active
+                : Object.values(services).filter((service) => service && service.available).length;
+
+            let firebaseText = 'Firebase logging is optional and not configured locally.';
+            if (data.firebase_connected) {
+                firebaseText = 'Firebase logging is connected for query and mesh update records.';
+            } else if (firebase.configured) {
+                firebaseText = 'Firebase settings are present, but the backend could not connect. Check the database URL and service account.';
+            }
+
+            note.textContent = `${activeCount} services active. ${firebaseText}`;
+        }
+
+        function updateModelLabel(modelName) {
+            const modelLabel = document.getElementById('modelLabel');
+            if (modelLabel) {
+                modelLabel.textContent = `${modelName || 'Gemini'} + ChromaDB`;
+            }
+        }
+
         // ===================================================================
         // Chat Interface
         // ===================================================================
+        function renderQuickQuestionButtons(container) {
+            QUICK_QUESTIONS.forEach((item) => {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'quick-question rounded bg-white px-3 py-2 text-xs font-medium text-blue-700 shadow-sm ring-1 ring-blue-100 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500';
+                button.dataset.question = item.question;
+                button.textContent = item.label;
+                button.addEventListener('click', () => sendQuery(item.question));
+                container.appendChild(button);
+            });
+        }
+
+        function renderWelcomeMessage() {
+            const messagesDiv = document.getElementById('chatMessages');
+            messagesDiv.innerHTML = '';
+
+            const welcomeMessage = document.createElement('div');
+            welcomeMessage.id = 'welcomeMessage';
+            welcomeMessage.className = 'text-center text-gray-500 mt-8';
+
+            const icon = document.createElement('i');
+            icon.className = 'fas fa-comments text-4xl opacity-20 mb-2';
+            icon.setAttribute('aria-hidden', 'true');
+
+            const title = document.createElement('p');
+            title.className = 'text-sm';
+            title.textContent = 'Welcome to the Election Kiosk';
+
+            const subtitle = document.createElement('p');
+            subtitle.className = 'text-xs opacity-70';
+            subtitle.textContent = 'Choose a common question or type your own.';
+
+            const quickQuestions = document.createElement('div');
+            quickQuestions.id = 'quickQuestions';
+            quickQuestions.className = 'mt-5 flex flex-wrap justify-center gap-2 px-2';
+            quickQuestions.setAttribute('aria-label', 'Suggested election questions');
+            renderQuickQuestionButtons(quickQuestions);
+
+            welcomeMessage.appendChild(icon);
+            welcomeMessage.appendChild(title);
+            welcomeMessage.appendChild(subtitle);
+            welcomeMessage.appendChild(quickQuestions);
+            messagesDiv.appendChild(welcomeMessage);
+        }
+
         function clearWelcomeMessage() {
             const welcomeMessage = document.getElementById('welcomeMessage');
             if (welcomeMessage) {
@@ -263,7 +367,7 @@
             }
         }
 
-        function addChatMessage(role, content) {
+        function addChatMessage(role, content, metadata = null) {
             const messagesDiv = document.getElementById('chatMessages');
             clearWelcomeMessage();
             const messageDiv = document.createElement('div');
@@ -284,6 +388,12 @@
             timestamp.textContent = new Date().toLocaleTimeString();
 
             bubble.appendChild(messageText);
+            if (metadata && role === 'assistant') {
+                const metaText = document.createElement('p');
+                metaText.className = 'mt-2 border-t border-gray-300 pt-2 text-xs text-gray-600';
+                metaText.textContent = metadata;
+                bubble.appendChild(metaText);
+            }
             bubble.appendChild(timestamp);
             messageDiv.appendChild(bubble);
             messagesDiv.appendChild(messageDiv);
@@ -307,9 +417,23 @@
             return messageDiv;
         }
 
-        async function sendQuery() {
+        function formatAnswerMetadata(data) {
+            const pieces = [];
+            if (data.model) {
+                pieces.push(`Model: ${data.model}`);
+            }
+            if (Array.isArray(data.context_used) && data.context_used.length > 0) {
+                pieces.push(`Sources: ${data.context_used.join(', ')}`);
+            }
+            if (typeof data.rag_chunks_used === 'number') {
+                pieces.push(`Chunks: ${data.rag_chunks_used}`);
+            }
+            return pieces.join(' | ');
+        }
+
+        async function sendQuery(questionOverride = null) {
             const queryInput = document.getElementById('queryInput');
-            const query = queryInput.value.trim();
+            const query = (questionOverride || queryInput.value).trim();
             if (!query) return;
             
             addChatMessage('user', query);
@@ -338,7 +462,7 @@
                     if (loadingMessage && loadingMessage.isConnected) {
                         loadingMessage.remove();
                     }
-                    addChatMessage('assistant', data.answer);
+                    addChatMessage('assistant', data.answer, formatAnswerMetadata(data));
                 } else {
                     const body = await response.text();
                     const errorMessage = body ? body : response.statusText;
@@ -360,6 +484,11 @@
             }
         }
 
+        function clearChat() {
+            renderWelcomeMessage();
+            document.getElementById('queryInput').focus();
+        }
+
         // ===================================================================
         // Event Listeners & Utilities
         // ===================================================================
@@ -368,8 +497,13 @@
             sendQuery();
         });
 
+        document.getElementById('clearChatBtn').addEventListener('click', clearChat);
+
         document.addEventListener('DOMContentLoaded', () => {
             initStatusPanel();
+            document.querySelectorAll('.quick-question').forEach((button) => {
+                button.addEventListener('click', () => sendQuery(button.dataset.question));
+            });
             document.getElementById('queryInput').focus();
         });
     </script>
