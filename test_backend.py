@@ -3,6 +3,7 @@ import asyncio
 
 import httpx
 import pytest
+from google.genai import errors as genai_errors
 
 import backend
 
@@ -208,6 +209,41 @@ class TestQueryEndpoint:
         assert data["grounded"] is True
         assert data["context_used"] == ["eligibility.txt"]
 
+    def test_query_falls_back_when_gemini_api_fails(self, client, monkeypatch):
+        class FailingGeminiModels:
+            def generate_content(self, model, contents):
+                response = httpx.Response(
+                    503,
+                    json={
+                        "error": {
+                            "code": 503,
+                            "message": "Gemini unavailable",
+                            "status": "UNAVAILABLE",
+                        }
+                    },
+                )
+                raise genai_errors.ServerError(503, response)
+
+        class FailingGeminiClient:
+            models = FailingGeminiModels()
+
+        monkeypatch.setattr(backend, "gemini_client", FailingGeminiClient())
+        monkeypatch.setattr(
+            backend,
+            "retrieve_context",
+            lambda _: "[Source: eligibility.txt]\nA voter must be 18 years of age or older.",
+        )
+
+        response = client.post(
+            "/api/query",
+            json={"question": "What is age limit in India?", "source": "web"},
+        )
+
+        data = response.json()
+        assert response.status_code == 200
+        assert data["model"] == "local-rag-fallback"
+        assert "18 years" in data["answer"]
+
     def test_legacy_chat_endpoint_returns_edge_response(self, client, monkeypatch):
         monkeypatch.setattr(backend, "gemini_client", None)
         monkeypatch.setattr(
@@ -244,6 +280,23 @@ class TestQueryEndpoint:
         )
 
         assert backend.retrieve_context_sources("What ID should I bring?") == ["eligibility.txt"]
+
+    def test_retrieve_context_limits_requested_chunks_to_available_count(self, monkeypatch):
+        class SmallCollection:
+            def count(self):
+                return 1
+
+            def query(self, query_texts, n_results, include):
+                assert n_results == 1
+                return {
+                    "documents": [["A voter must be 18 years of age or older."]],
+                    "metadatas": [[{"source": "eligibility.txt"}]],
+                }
+
+        monkeypatch.setattr(backend, "chroma_collection", SmallCollection())
+
+        context = backend.retrieve_context("What is age limit?", n=4)
+        assert "[Source: eligibility.txt]" in context
 
 
 class TestLoraEndpoint:

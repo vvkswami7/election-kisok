@@ -21,8 +21,10 @@ logging.getLogger("chromadb.telemetry.product.posthog").setLevel(logging.CRITICA
 
 try:
     import google.genai as genai
+    from google.genai import errors as genai_errors
 except (ImportError, ModuleNotFoundError):
     genai = None
+    genai_errors = None
 
 try:
     import chromadb
@@ -52,6 +54,11 @@ except (ImportError, ModuleNotFoundError):
     GoogleAPIError = RuntimeError
     GoogleAuthError = RuntimeError
 
+try:
+    from httpx import HTTPError as HttpxHTTPError
+except (ImportError, ModuleNotFoundError):
+    HttpxHTTPError = RuntimeError
+
 load_dotenv()
 
 DEFAULT_GEMINI_MODEL = "gemini-1.5-flash"
@@ -67,7 +74,10 @@ GOOGLE_SERVICE_ERRORS: Tuple[Type[BaseException], ...] = (
     OSError,
     GoogleAPIError,
     GoogleAuthError,
+    HttpxHTTPError,
 )
+if genai_errors is not None:
+    GOOGLE_SERVICE_ERRORS = (*GOOGLE_SERVICE_ERRORS, genai_errors.APIError)
 
 def int_env(name: str, default: int, minimum: int = 0) -> int:
     raw_value = os.getenv(name)
@@ -422,9 +432,13 @@ def retrieve_context(query: str, n: int = 4) -> str:
     if chroma_collection is None:
         return ""
     try:
+        available_chunks = chroma_collection.count()
+        n_results = min(n, available_chunks)
+        if n_results <= 0:
+            return ""
         results = chroma_collection.query(
             query_texts=[query],
-            n_results=n,
+            n_results=n_results,
             include=["documents", "metadatas"],
         )
     except (RuntimeError, ValueError, TypeError, AttributeError):
